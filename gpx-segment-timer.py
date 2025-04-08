@@ -3,23 +3,22 @@
 GPX Segment Time Measurement Script
 
 This script compares a recorded GPX track against reference segments (GPX files)
-to measure elapsed time on each segment. It is robust against varying sampling frequencies,
-nonuniform point counts, and repeated segments (e.g. laps). The matching process uses a candidate
-window selection (based on cumulative distances) plus dynamic time warping (DTW) on uniformly
-resampled points.
+to measure elapsed time on each segment. It is designed to be robust against varying
+sampling frequencies, nonuniform point counts, and repeated segments (e.g., laps).
 
-After a candidate is identified, its boundaries are refined via an "anchored DTW" search:
-the candidate’s start and end boundaries are adjusted independently over specified windows.
-For each candidate pair (i, j) the algorithm computes:
-  - the full DTW cost between the candidate and reference (after resampling),
-  - a cost based on the first k and last k points (to preserve the boundary shape),
-  - a penalty (weighted by anchor_alpha) for the Euclidean difference between candidate
-    and reference endpoints.
-The candidate that minimizes the combined cost is chosen.
-All detected segments are then logged (with information about reference and detected lengths)
-and exported (if requested) for debugging.
+The matching process is performed in several stages:
+  1. A coarse candidate window is identified based on cumulative distances.
+  2. A DTW-based refinement (using uniformly resampled points) produces a preliminary candidate.
+  3. An iterative grid search (with independent windows for start and end) adjusts the candidate
+     boundaries so that the overall candidate segment length approximates that of the reference.
+  4. A final local sliding-window refinement ("endpoint anchoring") adjusts each endpoint independently.
+     For each endpoint, a short subsegment (length L, default 10% of resample_count, min 3) is compared
+     against the corresponding reference subsegment, and the candidate boundary is slid within a local window.
+     
+Detected segments are stored (with warnings if boundary differences exceed --bbox-margin) and can be
+exported as GPX tracks for debugging.
 
-Output can be printed as a pretty table, CSV, or XLSX.
+Output can be printed as a pretty table (stdout), CSV, or XLSX.
 
 Author: [Your Name]
 Date: [Today's Date]
@@ -48,22 +47,18 @@ except ImportError:
 # -------------------------------------
 
 def haversine_distance(p1: Tuple[float, float], p2: Tuple[float, float]) -> float:
-    """
-    Compute the haversine distance (in meters) between two (lat, lon) points.
-    """
+    """Compute the haversine distance (in meters) between two (lat, lon) points."""
     radius = 6371000  # Earth's radius in meters
     lat1, lon1 = math.radians(p1[0]), math.radians(p1[1])
     lat2, lon2 = math.radians(p2[0]), math.radians(p2[1])
     dlat = lat2 - lat1
     dlon = lon2 - lon1
-    a = math.sin(dlat / 2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2)**2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
     return radius * c
 
 def load_gpx_points(filepath: str) -> List[Dict[str, Any]]:
-    """
-    Parse a GPX file and return a list of point dictionaries with keys 'lat', 'lon', 'time'.
-    """
+    """Parse a GPX file and return a list of point dictionaries with keys 'lat', 'lon', and 'time'."""
     points: List[Dict[str, Any]] = []
     with open(filepath, "r", encoding="utf-8") as f:
         gpx = gpxpy.parse(f)
@@ -73,16 +68,13 @@ def load_gpx_points(filepath: str) -> List[Dict[str, Any]]:
                 points.append({
                     'lat': point.latitude,
                     'lon': point.longitude,
-                    'time': point.time  # may be None
+                    'time': point.time
                 })
     logging.debug("Loaded %d points from %s.", len(points), filepath)
     return points
 
 def load_reference_segments(folder: str) -> Dict[str, List[Dict[str, Any]]]:
-    """
-    Load all GPX files from the specified folder as reference segments.
-    Returns a dictionary mapping filename to list of point dictionaries.
-    """
+    """Load all GPX files from the specified folder as reference segments."""
     segments: Dict[str, List[Dict[str, Any]]] = {}
     if not os.path.isdir(folder):
         raise ValueError(f"Reference folder '{folder}' is not a valid directory.")
@@ -96,9 +88,7 @@ def load_reference_segments(folder: str) -> Dict[str, List[Dict[str, Any]]]:
     return segments
 
 def compute_total_distance(points: List[Dict[str, Any]]) -> float:
-    """
-    Compute total distance (in meters) by summing distances between successive points.
-    """
+    """Compute the total distance (in meters) of a track by summing distances between successive points."""
     assert len(points) >= 1, "At least one point required."
     total = 0.0
     for i in range(1, len(points)):
@@ -109,7 +99,7 @@ def compute_total_distance(points: List[Dict[str, Any]]) -> float:
 
 def resample_points(points: List[Dict[str, Any]], num_samples: int) -> List[Tuple[float, float]]:
     """
-    Resample points uniformly along cumulative distance.
+    Uniformly resample points along cumulative distance.
     Returns a list of (lat, lon) tuples.
     """
     if not points:
@@ -143,28 +133,21 @@ def resample_points(points: List[Dict[str, Any]], num_samples: int) -> List[Tupl
     return new_pts
 
 def compute_bounding_box(points: List[Dict[str, Any]]) -> Tuple[float, float, float, float]:
-    """
-    Compute bounding box (min_lat, max_lat, min_lon, max_lon) for a set of points.
-    """
+    """Compute the bounding box (min_lat, max_lat, min_lon, max_lon) for a set of points."""
     lats = [p['lat'] for p in points]
     lons = [p['lon'] for p in points]
     return (min(lats), max(lats), min(lons), max(lons))
 
 def expand_bounding_box(bbox: Tuple[float, float, float, float], margin_m: float = 30) -> Tuple[float, float, float, float]:
-    """
-    Expand a bounding box by margin_m meters.
-    """
+    """Expand a bounding box by a given margin (in meters)."""
     min_lat, max_lat, min_lon, max_lon = bbox
     margin_deg_lat = margin_m / 111000
     avg_lat = (min_lat + max_lat) / 2
     margin_deg_lon = margin_m / (111000 * math.cos(math.radians(avg_lat)))
-    return (min_lat - margin_deg_lat, max_lat + margin_deg_lat,
-            min_lon - margin_deg_lon, max_lon + margin_deg_lon)
+    return (min_lat - margin_deg_lat, max_lat + margin_deg_lat, min_lon - margin_deg_lon, max_lon + margin_deg_lon)
 
 def point_in_bbox(point: Dict[str, Any], bbox: Tuple[float, float, float, float]) -> bool:
-    """
-    Return True if the point is within the specified bbox.
-    """
+    """Return True if the point lies within the specified bounding box."""
     lat, lon = point['lat'], point['lon']
     min_lat, max_lat, min_lon, max_lon = bbox
     return (min_lat <= lat <= max_lat) and (min_lon <= lon <= max_lon)
@@ -176,29 +159,30 @@ def refine_boundaries_using_warping_path(recorded_points: List[Dict[str, Any]],
                                          resample_count: int) -> Tuple[int, int]:
     """
     Use the DTW warping path from the candidate segment (resampled) to determine indices
-    that best align with the first and last reference points. A linear mapping converts the best
-    resampled indices back to indices in recorded_points.
+    in recorded_points that best align with the reference's start and end.
     """
     candidate_segment = recorded_points[candidate_start:candidate_end]
     candidate_resampled = resample_points(candidate_segment, resample_count)
     _, path = fastdtw(candidate_resampled, ref_resampled, dist=haversine_distance)
     start_indices = [i for (i, j) in path if j == 0]
-    end_indices = [i for (i, j) in path if j == (len(ref_resampled) - 1)]
+    end_indices = [i for (i, j) in path if j == len(ref_resampled)-1]
     min_i = min(start_indices) if start_indices else 0
-    max_i = max(end_indices) if end_indices else len(candidate_resampled) - 1
+    max_i = max(end_indices) if end_indices else len(candidate_resampled)-1
     candidate_length = candidate_end - candidate_start
     refined_start = candidate_start + round(min_i * (candidate_length - 1) / (resample_count - 1))
     refined_end = candidate_start + round(max_i * (candidate_length - 1) / (resample_count - 1)) + 1
     return refined_start, refined_end
 
-def adjust_boundaries(recorded_points: List[Dict[str, Any]], current_index: int,
-                      ref_coord: Tuple[float, float], window: int = 20) -> int:
+def adjust_boundaries(recorded_points: List[Dict[str, Any]],
+                      current_index: int,
+                      ref_coord: Tuple[float, float],
+                      window: int = 20) -> int:
     """
-    Adjust a boundary index within ±window indices to find the recorded point closest to ref_coord.
+    Adjust a boundary index within ±window points to find the recorded point closest to ref_coord.
     """
     best_idx = current_index
-    best_dist = haversine_distance((recorded_points[current_index]['lat'],
-                                    recorded_points[current_index]['lon']), ref_coord)
+    best_dist = haversine_distance((recorded_points[current_index]['lat'], recorded_points[current_index]['lon']),
+                                   ref_coord)
     start_search = max(0, current_index - window)
     end_search = min(len(recorded_points) - 1, current_index + window)
     for i in range(start_search, end_search + 1):
@@ -208,49 +192,67 @@ def adjust_boundaries(recorded_points: List[Dict[str, Any]], current_index: int,
             best_idx = i
     return best_idx
 
-def refine_boundaries_with_endpoint_anchoring(recorded_points: List[Dict[str, Any]],
-                                              initial_start: int,
-                                              initial_end: int,
-                                              ref_points: List[Dict[str, Any]],
-                                              rec_cum_dists: List[float],
-                                              iterative_window_start: int,
-                                              iterative_window_end: int,
-                                              anchor_alpha: float,
-                                              anchor_beta1: float,
-                                              anchor_beta2: float,
-                                              resample_count: int) -> Tuple[int, int]:
+def refine_endpoint_boundary(recorded_points: List[Dict[str, Any]],
+                             candidate_index: int,
+                             ref_sub: List[Tuple[float, float]],
+                             L: int,
+                             window: int,
+                             is_start: bool) -> int:
     """
-    Refine candidate boundaries by grid search with endpoint anchoring.
-    
-    For candidate boundaries (i, j) (within the independent windows for start and end),
-    the cost is defined as:
-      cost(i, j) = FullCost + anchor_beta1 * StartCost + anchor_beta2 * EndCost +
-                   anchor_alpha * (Euclidean distance from candidate start to reference start +
-                                   Euclidean distance from candidate end to reference end)
-    where:
-      - FullCost is the DTW cost (over resample_count points) of candidate[i:j] versus the full reference.
-      - StartCost is the DTW cost over the first k resampled points.
-      - EndCost is the DTW cost over the last k resampled points.
-    The value k is chosen as max(3, int(0.1 * resample_count)).
-    
-    Returns the boundaries (i*, j*) that minimize the combined cost.
+    Refine a single endpoint (start if is_start True, end if False) by sliding within ±window points.
+    For the start, candidate subsegments of length L starting at each candidate index are compared against
+    ref_sub (the first L reference points); for the end, candidate subsegments ending at each candidate index are compared
+    against the last L reference points. Returns the candidate index that minimizes the cost.
     """
-    # Compute full resampled reference.
-    ref_resampled = resample_points(ref_points, resample_count)
-    full_candidate = recorded_points[initial_start:initial_end]
-    candidate_resampled = resample_points(full_candidate, resample_count)
-    full_cost = fastdtw(candidate_resampled, ref_resampled, dist=haversine_distance)[0] / resample_count
-    k = max(3, int(0.1 * resample_count))
-    # Compute sub-segment costs for start and end of the reference.
-    ref_start_sub = resample_points(ref_points[0:k], k)
-    ref_end_sub = resample_points(ref_points[-k:], k)
+    best_idx = candidate_index
+    best_cost = float('inf')
+    candidate_range = range(max(0, candidate_index - window), min(len(recorded_points), candidate_index + window + 1))
+    for i in candidate_range:
+        if is_start:
+            candidate_sub = recorded_points[i:i+L]
+            if len(candidate_sub) < L:
+                continue
+            candidate_resampled = resample_points(candidate_sub, L)
+        else:
+            start_i = i - L + 1
+            if start_i < 0:
+                continue
+            candidate_sub = recorded_points[start_i:i+1]
+            if len(candidate_sub) < L:
+                continue
+            candidate_resampled = resample_points(candidate_sub, L)
+        cost = sum(haversine_distance(candidate_resampled[k], ref_sub[k]) for k in range(L))
+        if cost < best_cost:
+            best_cost = cost
+            best_idx = i
+    return best_idx
+
+def refine_boundaries_iteratively(recorded_points: List[Dict[str, Any]],
+                                  initial_start: int,
+                                  initial_end: int,
+                                  ref_start_coord: Tuple[float, float],
+                                  ref_end_coord: Tuple[float, float],
+                                  ref_total_distance: float,
+                                  rec_cum_dists: List[float],
+                                  iterative_window_start: int,
+                                  iterative_window_end: int,
+                                  penalty_weight: float = 1.0) -> Tuple[int, int]:
+    """
+    Iteratively refine candidate boundaries via grid search over start and end indices independently.
+    The cost function is:
+      cost(i, j) = |(rec_cum_dists[j] - rec_cum_dists[i]) - ref_total_distance| +
+                   penalty_weight * (haversine_distance((recorded_points[i]['lat'], recorded_points[i]['lon']),
+                                                         ref_start_coord) +
+                                     haversine_distance((recorded_points[j-1]['lat'], recorded_points[j-1]['lon']),
+                                                        ref_end_coord))
+    Returns candidate boundaries (i, j) that minimize this cost.
+    """
     best_i = initial_start
     best_j = initial_end
-    best_cost = full_cost + anchor_alpha * (
-        haversine_distance((recorded_points[initial_start]['lat'], recorded_points[initial_start]['lon']),
-                           (ref_points[0]['lat'], ref_points[0]['lon'])) +
-        haversine_distance((recorded_points[initial_end-1]['lat'], recorded_points[initial_end-1]['lon']),
-                           (ref_points[-1]['lat'], ref_points[-1]['lon']))
+    candidate_distance = rec_cum_dists[initial_end] - rec_cum_dists[initial_start]
+    best_cost = abs(candidate_distance - ref_total_distance) + penalty_weight * (
+        haversine_distance((recorded_points[initial_start]['lat'], recorded_points[initial_start]['lon']), ref_start_coord) +
+        haversine_distance((recorded_points[initial_end-1]['lat'], recorded_points[initial_end-1]['lon']), ref_end_coord)
     )
     i_min = max(0, initial_start - iterative_window_start)
     i_max = min(len(recorded_points) - 2, initial_start + iterative_window_start)
@@ -260,231 +262,16 @@ def refine_boundaries_with_endpoint_anchoring(recorded_points: List[Dict[str, An
         for j in range(j_min, j_max + 1):
             if j <= i + 1:
                 continue
-            candidate_sub = recorded_points[i:j]
-            candidate_full_resampled = resample_points(candidate_sub, resample_count)
-            full_cost_candidate = fastdtw(candidate_full_resampled, ref_resampled, dist=haversine_distance)[0] / resample_count
-            candidate_start_sub = resample_points(recorded_points[i:i+k], k)
-            candidate_end_sub = resample_points(recorded_points[j-k:j], k)
-            start_cost = fastdtw(candidate_start_sub, ref_start_sub, dist=haversine_distance)[0] / k
-            end_cost = fastdtw(candidate_end_sub, ref_end_sub, dist=haversine_distance)[0] / k
-            boundary_penalty = anchor_alpha * (
-                haversine_distance((recorded_points[i]['lat'], recorded_points[i]['lon']),
-                                   (ref_points[0]['lat'], ref_points[0]['lon'])) +
-                haversine_distance((recorded_points[j-1]['lat'], recorded_points[j-1]['lon']),
-                                   (ref_points[-1]['lat'], ref_points[-1]['lon']))
+            seg_distance = rec_cum_dists[j] - rec_cum_dists[i]
+            cost = abs(seg_distance - ref_total_distance) + penalty_weight * (
+                haversine_distance((recorded_points[i]['lat'], recorded_points[i]['lon']), ref_start_coord) +
+                haversine_distance((recorded_points[j-1]['lat'], recorded_points[j-1]['lon']), ref_end_coord)
             )
-            cost = full_cost_candidate + anchor_beta1 * start_cost + anchor_beta2 * end_cost + boundary_penalty
             if cost < best_cost:
                 best_cost = cost
                 best_i = i
                 best_j = j
     return best_i, best_j
-
-def find_all_segment_matches(
-    recorded_points: List[Dict[str, Any]],
-    ref_points: List[Dict[str, Any]],
-    candidate_margin: float,
-    dtw_threshold: float,
-    resample_count: int,
-    min_gap: int = 1,
-    bbox_margin_m: float = 30
-) -> List[Tuple[int, int, float]]:
-    """
-    Find candidate matching segments in the recorded track for the reference segment.
-    
-    Candidate windows are determined using cumulative distances (within candidate_margin)
-    and limited to those with endpoints inside an expanded bounding box (margin: bbox_margin_m).
-    For candidates with DTW cost below dtw_threshold, warping-path-based refinement is performed.
-    
-    Returns a list of tuples (refined_start, refined_end, dtw_avg).
-    """
-    assert recorded_points, "Recorded track must contain points."
-    assert ref_points, "Reference segment must contain points."
-    assert candidate_margin > 0, "Candidate margin must be positive."
-    assert dtw_threshold > 0, "DTW threshold must be positive."
-    assert resample_count >= 2, "Resample count must be at least 2."
-    ref_total_distance = compute_total_distance(ref_points)
-    ref_resampled = resample_points(ref_points, resample_count)
-    ref_bbox = compute_bounding_box(ref_points)
-    expanded_bbox = expand_bounding_box(ref_bbox, margin_m=bbox_margin_m)
-    rec_cum_dists: List[float] = [0.0]
-    for i in range(1, len(recorded_points)):
-        d = haversine_distance((recorded_points[i-1]['lat'], recorded_points[i-1]['lon']),
-                               (recorded_points[i]['lat'], recorded_points[i]['lon']))
-        rec_cum_dists.append(rec_cum_dists[-1] + d)
-    matches: List[Tuple[int, int, float]] = []
-    rec_length = len(recorded_points)
-    start = 0
-    while start < rec_length - 1:
-        if not point_in_bbox(recorded_points[start], expanded_bbox):
-            start += 1
-            continue
-        lower_target = rec_cum_dists[start] + ref_total_distance * (1 - candidate_margin)
-        upper_target = rec_cum_dists[start] + ref_total_distance * (1 + candidate_margin)
-        lower_end = bisect.bisect_left(rec_cum_dists, lower_target, lo=start+1, hi=rec_length)
-        upper_end = bisect.bisect_right(rec_cum_dists, upper_target, lo=start+1, hi=rec_length)
-        logging.debug("Start index %d: candidate endpoints in range [%d, %d)", start, lower_end, upper_end)
-        candidate_range_length = upper_end - lower_end
-        dynamic_stride = max(1, candidate_range_length // 10)
-        best_dtw = float('inf')
-        best_candidate = None
-        candidate_found = False
-        for end in range(lower_end, upper_end, dynamic_stride):
-            if not (point_in_bbox(recorded_points[start], expanded_bbox) and 
-                    point_in_bbox(recorded_points[end], expanded_bbox)):
-                continue
-            candidate_segment = recorded_points[start:end+1]
-            if len(candidate_segment) < 2:
-                continue
-            candidate_resampled = resample_points(candidate_segment, resample_count)
-            dtw_distance, _ = fastdtw(candidate_resampled, ref_resampled, dist=haversine_distance)
-            dtw_avg = dtw_distance / resample_count
-            logging.debug("Candidate from %d to %d: dtw_avg=%.2f", start, end+1, dtw_avg)
-            if dtw_avg < best_dtw:
-                best_dtw = dtw_avg
-                best_candidate = end
-            if dtw_avg > best_dtw * 1.01:
-                logging.debug("Early termination at candidate %d.", end)
-                break
-            if dtw_avg < dtw_threshold:
-                refined_start, refined_end = refine_boundaries_using_warping_path(
-                    recorded_points, start, end+1, ref_resampled, resample_count)
-                matches.append((refined_start, refined_end, dtw_avg))
-                logging.info("Candidate match from %d to %d (preliminary) with dtw_avg=%.2f", refined_start, refined_end, dtw_avg)
-                start = end + min_gap
-                candidate_found = True
-                break
-        if not candidate_found:
-            start += 1
-    return matches
-
-def measure_segment_time(recorded_points: List[Dict[str, Any]], start_idx: int, end_idx: int) -> Optional[float]:
-    """
-    Compute the elapsed time (in seconds) between the first and last points of a segment.
-    """
-    assert 0 <= start_idx < end_idx <= len(recorded_points), "Invalid indices."
-    start_time = recorded_points[start_idx]['time']
-    end_time = recorded_points[end_idx - 1]['time']
-    if start_time and end_time:
-        seconds = (end_time - start_time).total_seconds()
-        logging.debug("Measured time for segment (%d, %d): %.2f seconds", start_idx, end_idx, seconds)
-        return seconds
-    logging.warning("Missing timestamp for segment endpoints %d and %d.", start_idx, end_idx)
-    return None
-
-def export_matches_to_gpx(matches: List[Tuple[int, int, float]],
-                          recorded_points: List[Dict[str, Any]],
-                          recorded_filename: str,
-                          ref_filename: str,
-                          output_gpx: str) -> None:
-    """
-    Export matched segments as individual GPX tracks in a file.
-    Each track is named using the recorded filename, reference filename, and a match number.
-    """
-    gpx = gpxpy.gpx.GPX()
-    for i, (start_idx, end_idx, dtw_avg) in enumerate(matches, start=1):
-        track = gpxpy.gpx.GPXTrack()
-        track.name = f"{os.path.basename(recorded_filename)} - {ref_filename} (match {i})"
-        segment = gpxpy.gpx.GPXTrackSegment()
-        for pt in recorded_points[start_idx:end_idx]:
-            segment.points.append(gpxpy.gpx.GPXTrackPoint(pt['lat'], pt['lon'], time=pt['time']))
-        track.segments.append(segment)
-        gpx.tracks.append(track)
-    with open(output_gpx, "w", encoding="utf-8") as f:
-        f.write(gpx.to_xml())
-    logging.info("Exported matched segments to GPX file: %s", output_gpx)
-
-def output_results(
-    results: List[Dict[str, Any]],
-    output_mode: str,
-    output_file: Optional[str]
-) -> None:
-    """
-    Output results in stdout, csv, or xlsx.
-    
-    Columns include:
-      - "Ref Start": reference segment start coordinates.
-      - "Ref End": reference segment end coordinates.
-      - "Start Diff (m)": distance from detected start to reference start.
-      - "End Diff (m)": distance from detected end to reference end.
-      - "Ref Dist (m)": total distance of the reference segment.
-      - "Detected Dist (m)": total distance of the detected segment.
-    """
-    header = ["Segment", "Start Idx", "End Idx", "Ref Dist (m)", "Detected Dist (m)",
-              "DTW Avg (m)", "Time (s)", "Time (H:M:S)",
-              "Ref Start", "Ref End", "Start Diff (m)", "End Diff (m)"]
-    if output_mode == "stdout":
-        print("{:<25} {:>10} {:>10} {:>15} {:>20} {:>15} {:>12} {:>15} {:>25} {:>25} {:>18} {:>15}".format(*header))
-        print("-" * 200)
-        for res in results:
-            print("{:<25} {:>10} {:>10} {:>15.2f} {:>20.2f} {:>15.2f} {:>12.2f} {:>15} {:>25} {:>25} {:>18.2f} {:>15.2f}".format(
-                res["segment"],
-                res["start_index"],
-                res["end_index"],
-                res["ref_distance"],
-                res["detected_distance"],
-                res["dtw_avg"],
-                res["time_seconds"] if res["time_seconds"] is not None else -1,
-                res["time_str"] if res["time_str"] is not None else "N/A",
-                res["ref_start"],
-                res["ref_end"],
-                res["start_diff"],
-                res["end_diff"]
-            ))
-    elif output_mode == "csv":
-        if output_file is None:
-            raise ValueError("Output file must be provided for CSV output.")
-        with open(output_file, "w", newline="", encoding="utf-8") as csvfile:
-            writer = csv.writer(csvfile)
-            writer.writerow(header)
-            for res in results:
-                writer.writerow([
-                    res["segment"],
-                    res["start_index"],
-                    res["end_index"],
-                    f"{res['ref_distance']:.2f}",
-                    f"{res['detected_distance']:.2f}",
-                    f"{res['dtw_avg']:.2f}",
-                    f"{res['time_seconds']:.2f}" if res["time_seconds"] is not None else "",
-                    res["time_str"] if res["time_str"] is not None else "",
-                    res["ref_start"],
-                    res["ref_end"],
-                    f"{res['start_diff']:.2f}",
-                    f"{res['end_diff']:.2f}"
-                ])
-        logging.info("Results written to CSV file: %s", output_file)
-    elif output_mode == "xlsx":
-        if output_file is None:
-            raise ValueError("Output file must be provided for XLSX output.")
-        if Workbook is None:
-            raise ImportError("openpyxl is required for XLSX output.")
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Segment Times"
-        ws.append(header)
-        for res in results:
-            ws.append([
-                res["segment"],
-                res["start_index"],
-                res["end_index"],
-                float(f"{res['ref_distance']:.2f}"),
-                float(f"{res['detected_distance']:.2f}"),
-                float(f"{res['dtw_avg']:.2f}"),
-                float(f"{res['time_seconds']:.2f}") if res["time_seconds"] is not None else None,
-                res["time_str"] if res["time_str"] is not None else "",
-                res["ref_start"],
-                res["ref_end"],
-                float(f"{res['start_diff']:.2f}"),
-                float(f"{res['end_diff']:.2f}")
-            ])
-        wb.save(output_file)
-        logging.info("Results written to XLSX file: %s", output_file)
-    else:
-        raise ValueError(f"Unsupported output mode: {output_mode}")
-
-# -------------------------------------
-# Endpoint Anchoring Refinement
-# -------------------------------------
 
 def refine_boundaries_with_endpoint_anchoring(recorded_points: List[Dict[str, Any]],
                                               initial_start: int,
@@ -498,21 +285,16 @@ def refine_boundaries_with_endpoint_anchoring(recorded_points: List[Dict[str, An
                                               anchor_beta2: float,
                                               resample_count: int) -> Tuple[int, int]:
     """
-    Refine candidate boundaries using an endpoint anchoring approach.
+    Refine candidate boundaries using endpoint anchoring.
     
-    The candidate segment from initial_start to initial_end is considered.
-    A grid search is performed independently over start indices (within ±iterative_window_start)
-    and end indices (within ±iterative_window_end). For each candidate (i, j), we compute:
-      - FullCost: the DTW cost between the candidate subsegment and the full reference (resampled).
-      - StartCost: the DTW cost on the first k points (for shape preservation of the start), where k = max(3, int(0.1 * resample_count)).
-      - EndCost: the DTW cost on the last k points.
-      - BoundaryPenalty: the sum of the Euclidean distances between candidate[i] and ref[0],
-        and candidate[j-1] and ref[-1], multiplied by anchor_alpha.
+    This function first computes a full cost (DTW cost of the entire candidate segment),
+    and then uses a grid search over candidate boundaries (within provided iterative windows)
+    that adds:
+      - A cost based on a local DTW computed on the first L (>=3) points (anchor_beta1),
+      - A cost based on a local DTW computed on the last L points (anchor_beta2),
+      - A penalty (weighted by anchor_alpha) for the Euclidean distances at the endpoints.
     
-    The overall cost is:
-      cost(i,j) = FullCost + anchor_beta1 * StartCost + anchor_beta2 * EndCost + BoundaryPenalty.
-    
-    The candidate boundaries that minimize this cost are returned.
+    Returns refined candidate boundaries (i, j).
     """
     ref_total_distance = compute_total_distance(ref_points)
     ref_resampled = resample_points(ref_points, resample_count)
@@ -520,9 +302,9 @@ def refine_boundaries_with_endpoint_anchoring(recorded_points: List[Dict[str, An
     candidate_full_resampled = resample_points(candidate_full, resample_count)
     full_cost = fastdtw(candidate_full_resampled, ref_resampled, dist=haversine_distance)[0] / resample_count
 
-    k = max(3, int(0.1 * resample_count))
-    ref_start_sub = resample_points(ref_points[0:k], k)
-    ref_end_sub = resample_points(ref_points[-k:], k)
+    L = max(3, int(0.1 * resample_count))
+    ref_start_sub = resample_points(ref_points[0:L], L)
+    ref_end_sub = resample_points(ref_points[-L:], L)
 
     best_i = initial_start
     best_j = initial_end
@@ -532,6 +314,7 @@ def refine_boundaries_with_endpoint_anchoring(recorded_points: List[Dict[str, An
         haversine_distance((recorded_points[initial_end-1]['lat'], recorded_points[initial_end-1]['lon']),
                            (ref_points[-1]['lat'], ref_points[-1]['lon']))
     )
+
     i_min = max(0, initial_start - iterative_window_start)
     i_max = min(len(recorded_points) - 2, initial_start + iterative_window_start)
     j_min = max(initial_end - iterative_window_end, i_min + 2)
@@ -540,14 +323,14 @@ def refine_boundaries_with_endpoint_anchoring(recorded_points: List[Dict[str, An
         for j in range(j_min, j_max + 1):
             if j <= i + 1:
                 continue
-            candidate_sub = recorded_points[i:j]
-            candidate_resampled = resample_points(candidate_sub, resample_count)
+            candidate_resampled = resample_points(recorded_points[i:j], resample_count)
             full_cost_candidate = fastdtw(candidate_resampled, ref_resampled, dist=haversine_distance)[0] / resample_count
-
-            candidate_start_sub = resample_points(recorded_points[i:i+k], k)
-            candidate_end_sub = resample_points(recorded_points[j-k:j], k)
-            start_cost = fastdtw(candidate_start_sub, ref_start_sub, dist=haversine_distance)[0] / k
-            end_cost = fastdtw(candidate_end_sub, ref_end_sub, dist=haversine_distance)[0] / k
+            candidate_start_sub = resample_points(recorded_points[i:i+L], L) if len(recorded_points[i:i+L]) >= L else None
+            candidate_end_sub = resample_points(recorded_points[j-L:j], L) if len(recorded_points[j-L:j]) >= L else None
+            if candidate_start_sub is None or candidate_end_sub is None:
+                continue
+            start_cost = fastdtw(candidate_start_sub, ref_start_sub, dist=haversine_distance)[0] / L
+            end_cost = fastdtw(candidate_end_sub, ref_end_sub, dist=haversine_distance)[0] / L
             boundary_penalty = anchor_alpha * (
                 haversine_distance((recorded_points[i]['lat'], recorded_points[i]['lon']),
                                    (ref_points[0]['lat'], ref_points[0]['lon'])) +
@@ -561,21 +344,19 @@ def refine_boundaries_with_endpoint_anchoring(recorded_points: List[Dict[str, An
                 best_j = j
     return best_i, best_j
 
-def find_all_segment_matches(
-    recorded_points: List[Dict[str, Any]],
-    ref_points: List[Dict[str, Any]],
-    candidate_margin: float,
-    dtw_threshold: float,
-    resample_count: int,
-    min_gap: int = 1,
-    bbox_margin_m: float = 30
-) -> List[Tuple[int, int, float]]:
+def find_all_segment_matches(recorded_points: List[Dict[str, Any]],
+                             ref_points: List[Dict[str, Any]],
+                             candidate_margin: float,
+                             dtw_threshold: float,
+                             resample_count: int,
+                             min_gap: int = 1,
+                             bbox_margin_m: float = 30) -> List[Tuple[int, int, float]]:
     """
-    Find candidate matching segments in the recorded track for a reference segment.
+    Find candidate matching segments in the recorded track for the given reference segment.
     
-    Candidate windows are determined using cumulative distances (within candidate_margin)
-    and are limited to those with endpoints inside an expanded bounding box (margin: bbox_margin_m).
-    For candidates with DTW cost below dtw_threshold, warping-path-based refinement is performed.
+    Candidate windows are determined based on cumulative distances (within candidate_margin)
+    and restricted to those whose endpoints lie within an expanded bounding box (by bbox_margin_m).
+    For candidates with DTW cost below dtw_threshold, a preliminary refinement using warping-path is applied.
     
     Returns a list of tuples (refined_start, refined_end, dtw_avg).
     """
@@ -639,9 +420,11 @@ def find_all_segment_matches(
             start += 1
     return matches
 
-def measure_segment_time(recorded_points: List[Dict[str, Any]], start_idx: int, end_idx: int) -> Optional[float]:
+def measure_segment_time(recorded_points: List[Dict[str, Any]],
+                         start_idx: int,
+                         end_idx: int) -> Optional[float]:
     """
-    Compute the elapsed time (in seconds) between the first and last point of a segment.
+    Compute elapsed time (in seconds) between the first and last point of a segment.
     """
     assert 0 <= start_idx < end_idx <= len(recorded_points), "Invalid indices."
     start_time = recorded_points[start_idx]['time']
@@ -675,19 +458,17 @@ def export_matches_to_gpx(matches: List[Tuple[int, int, float]],
         f.write(gpx.to_xml())
     logging.info("Exported matched segments to GPX file: %s", output_gpx)
 
-def output_results(
-    results: List[Dict[str, Any]],
-    output_mode: str,
-    output_file: Optional[str]
-) -> None:
+def output_results(results: List[Dict[str, Any]],
+                   output_mode: str,
+                   output_file: Optional[str]) -> None:
     """
     Output results in stdout, csv, or xlsx.
     
-    Columns include:
+    Output columns include:
       - "Ref Start": reference segment start coordinates.
       - "Ref End": reference segment end coordinates.
-      - "Start Diff (m)": distance from detected start to reference start.
-      - "End Diff (m)": distance from detected end to reference end.
+      - "Start Diff (m)": difference between detected and reference start.
+      - "End Diff (m)": difference between detected and reference end.
       - "Ref Dist (m)": total distance of the reference segment.
       - "Detected Dist (m)": total distance of the detected segment.
     """
@@ -769,12 +550,17 @@ def output_results(
 
 def main() -> None:
     """
-    Main routine: parses arguments, loads the recorded track and reference segments,
-    finds candidate matches, refines boundaries (using warping-path-based refinement followed by
-    independent endpoint anchoring), computes elapsed time and distances, and outputs results.
+    Main routine: Parses command-line arguments, loads the recorded track and reference segments,
+    finds candidate matches, and refines the candidate boundaries in several steps:
+      1. Coarse candidate selection based on cumulative distance and DTW.
+      2. Iterative grid refinement over start and end indices separately.
+      3. Final local sliding-window endpoint anchoring.
     
-    Detected segments are stored (with warnings if boundary differences exceed --bbox-margin)
-    and exported (if requested), along with printing the reference and detected segment lengths.
+    The final detected segment is compared with the reference by computing the distance difference
+    at the endpoints. (A warning is logged if the difference exceeds --bbox-margin, but the candidate
+    is still stored.) Optionally, matched segments are exported as GPX tracks.
+    
+    Output includes the reference segment’s and detected segment’s total distances.
     """
     parser = argparse.ArgumentParser(
         description="Measure elapsed time on reference segments within a recorded GPX track.",
@@ -797,27 +583,31 @@ def main() -> None:
     parser.add_argument("--min-gap", type=int, default=1,
                         help="Minimum number of recorded points to skip after a match.")
     parser.add_argument("--bbox-margin", type=float, default=30,
-                        help="Margin (in meters) for expanding the reference bounding box and for boundary tolerance.")
+                        help="Margin (in meters) for expanding the reference bounding box and for endpoint tolerance.")
     parser.add_argument("--refine-window", type=int, default=5,
                         help="Window size (in points) for initial shape-based boundary refinement.")
     parser.add_argument("--iterative-window-start", type=int, default=50,
                         help="Search window (in points) for adjusting the start boundary independently.")
     parser.add_argument("--iterative-window-end", type=int, default=50,
                         help="Search window (in points) for adjusting the end boundary independently.")
-    parser.add_argument("--anchor-alpha", type=float, default=1.0,
-                        help="Weight for the Euclidean boundary penalty in endpoint anchoring.")
+    parser.add_argument("--penalty-weight", type=float, default=2.0,
+                        help="Weight for the Euclidean endpoint penalty in grid refinement (renamed from lambda-weight).")
     parser.add_argument("--anchor-beta1", type=float, default=1.0,
-                        help="Weight for the start shape cost in endpoint anchoring.")
+                        help="Weight for the DTW cost on the start subsegment in endpoint anchoring.")
     parser.add_argument("--anchor-beta2", type=float, default=1.0,
-                        help="Weight for the end shape cost in endpoint anchoring.")
-    parser.add_argument("--export-gpx", action="store_true",
-                        help="Export matched segments as individual GPX tracks.")
-    parser.add_argument("--export-gpx-file", default="matched_segments.gpx",
-                        help="Output GPX file for exporting matched segments.")
+                        help="Weight for the DTW cost on the end subsegment in endpoint anchoring.")
+    parser.add_argument("--endpoint-window-start", type=int, default=1000,
+                        help="Local sliding window (in points) for refining the start boundary.")
+    parser.add_argument("--endpoint-window-end", type=int, default=1000,
+                        help="Local sliding window (in points) for refining the end boundary.")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Enable verbose logging (INFO level).")
     parser.add_argument("-d", "--debug", action="store_true",
                         help="Enable debug logging (DEBUG level).")
+    parser.add_argument("--export-gpx", action="store_true",
+                        help="Export matched segments as individual GPX tracks.")
+    parser.add_argument("--export-gpx-file", default="matched_segments.gpx",
+                        help="Output GPX file for exporting matched segments.")
     args = parser.parse_args()
 
     log_level = logging.WARNING
@@ -842,7 +632,7 @@ def main() -> None:
         logging.error("No valid reference GPX files found in: %s", args.reference_folder)
         return
 
-    # Precompute cumulative distances for recorded track.
+    # Precompute cumulative distances for the recorded track.
     rec_cum_dists: List[float] = [0.0]
     for i in range(1, len(recorded_points)):
         d = haversine_distance((recorded_points[i-1]['lat'], recorded_points[i-1]['lon']),
@@ -862,9 +652,8 @@ def main() -> None:
         logging.info("Reference '%s' start: (%.6f, %.6f), end: (%.6f, %.6f), distance: %.2f m",
                      seg_filename, ref_start_coords[0], ref_start_coords[1],
                      ref_end_coords[0], ref_end_coords[1], ref_distance)
-        
         current_ref_resampled = resample_points(ref_points, args.resample_count)
-        
+
         matches = find_all_segment_matches(
             recorded_points,
             ref_points,
@@ -878,22 +667,25 @@ def main() -> None:
             logging.info("No matching segments found for reference '%s'.", seg_filename)
             continue
 
+        L = max(3, int(0.1 * args.resample_count))  # subsegment length for endpoint anchoring
+        ref_start_sub = resample_points(ref_points[0:L], L)
+        ref_end_sub = resample_points(ref_points[-L:], L)
+
         for (start_idx, end_idx, dtw_avg) in matches:
+            # Initial refinement via DTW warping path.
             refined_start, refined_end = refine_boundaries_using_warping_path(
-                recorded_points, start_idx, end_idx,
-                current_ref_resampled, resample_count=args.resample_count)
-            # Use the new endpoint anchoring refinement to adjust boundaries independently.
-            final_start, final_end = refine_boundaries_with_endpoint_anchoring(
-                recorded_points,
-                refined_start, refined_end,
-                ref_points,
-                rec_cum_dists,
+                recorded_points, start_idx, end_idx, current_ref_resampled, args.resample_count)
+            # Coarse grid search adjustment.
+            grid_start, grid_end = refine_boundaries_iteratively(
+                recorded_points, refined_start, refined_end,
+                ref_start_coords, ref_end_coords, ref_distance, rec_cum_dists,
                 iterative_window_start=args.iterative_window_start,
                 iterative_window_end=args.iterative_window_end,
-                anchor_alpha=args.anchor_alpha,
-                anchor_beta1=args.anchor_beta1,
-                anchor_beta2=args.anchor_beta2,
-                resample_count=args.resample_count)
+                penalty_weight=args.penalty_weight)
+            # Final local sliding-window refinement (endpoint anchoring).
+            final_start = refine_endpoint_boundary(recorded_points, grid_start, ref_start_sub, L, args.endpoint_window_start, True)
+            final_end = refine_endpoint_boundary(recorded_points, grid_end - 1, ref_end_sub, L, args.endpoint_window_end, False) + 1
+
             detected_distance = rec_cum_dists[final_end] - rec_cum_dists[final_start]
             detected_start_coords = (recorded_points[final_start]['lat'], recorded_points[final_start]['lon'])
             detected_end_coords = (recorded_points[final_end - 1]['lat'], recorded_points[final_end - 1]['lon'])
