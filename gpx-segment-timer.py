@@ -23,8 +23,8 @@ Detected segments (with boundary, DTW, and timing information) are output and op
 
 Output can be printed as a pretty table (stdout), CSV, or XLSX.
 
-Author: [Your Name]
-Date: [Today's Date]
+Author: Petr Holub
+Date: 2025
 """
 
 import os
