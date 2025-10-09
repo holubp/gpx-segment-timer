@@ -35,9 +35,49 @@ import csv
 import logging
 import bisect
 from typing import List, Tuple, Dict, Optional, Any
+import re
 
 import gpxpy
 from fastdtw import fastdtw
+
+def log_gpx_input_stats(filepath: str, label: str) -> None:
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            gpx = gpxpy.parse(f)
+        num_tracks = len(gpx.tracks)
+        details = []
+        total_pts = 0
+        for t_idx, trk in enumerate(gpx.tracks, 1):
+            pts_in_track = sum(len(seg.points) for seg in trk.segments)
+            total_pts += pts_in_track
+            details.append(f"track{t_idx}={pts_in_track} pts in {len(trk.segments)} segs")
+        if logging.getLogger().isEnabledFor(logging.INFO):
+            logging.info("%s GPX stats: %d track(s), %d total points (%s)", label, num_tracks, total_pts, "; ".join(details))
+    except Exception as ex:
+        logging.warning("Failed to parse %s for stats: %s", filepath, ex)
+
+def export_candidate_runs_to_gpx(recorded_points: List[Dict[str, Any]],
+                                 runs_and_candidates: List[Tuple[int, Tuple[int,int], List[Tuple[int,int]]]],
+                                 ref_name: str,
+                                 pattern: str) -> None:
+    import gpxpy.gpx
+    safe_ref = re.sub(r'[^A-Za-z0-9_.-]+', '_', ref_name)
+    for run_idx, (rs, re_), cands in runs_and_candidates:
+        if not cands:
+            continue
+        gpx = gpxpy.gpx.GPX()
+        for (s, e) in cands:
+            trk = gpxpy.gpx.GPXTrack(name=f"{safe_ref}_s{s}_e{e}")
+            gpx.tracks.append(trk)
+            seg = gpxpy.gpx.GPXTrackSegment()
+            trk.segments.append(seg)
+            for i in range(s, e+1):
+                pt = recorded_points[i]
+                seg.points.append(gpxpy.gpx.GPXTrackPoint(pt['lat'], pt['lon'], time=pt.get('time')))
+        out_path = pattern.format(ref=safe_ref, run=run_idx, rs=rs, re=re_, n=len(cands))
+        with open(out_path, "w", encoding="utf-8") as fh:
+            fh.write(gpx.to_xml())
+        logging.info("Dumped %d candidate segments to GPX: %s", len(cands), out_path)
 
 # Try to import openpyxl for XLSX output.
 try:
@@ -49,6 +89,52 @@ except ImportError:
 # Helper Functions
 # -------------------------------------
 
+
+def _count_runs(arr):
+    runs = 0
+    prev = False
+    for v in arr:
+        if v and not prev:
+            runs += 1
+        prev = v
+    return runs
+
+def enforce_single_passage(recorded_points, start_idx, end_idx, ref_start_coords, ref_end_coords, radius_m, edge_frac):
+    """Return True if the path between [start_idx, end_idx) touches the start buffer once near the beginning
+    and the end buffer once near the end, with no extra re-entries (useful for self-intersecting tracks)."""
+    if end_idx <= start_idx or end_idx - start_idx < 2:
+        return False
+    seg = recorded_points[start_idx:end_idx]
+    start_near = [haversine_distance((p['lat'], p['lon']), ref_start_coords) <= radius_m for p in seg]
+    end_near = [haversine_distance((p['lat'], p['lon']), ref_end_coords) <= radius_m for p in seg]
+    start_runs = _count_runs(start_near)
+    end_runs = _count_runs(end_near)
+    n = len(seg)
+    # Where do we first/last touch?
+    try:
+        first_start_touch = start_near.index(True)
+    except ValueError:
+        first_start_touch = None
+    try:
+        last_end_touch = n - 1 - list(reversed(end_near)).index(True)
+    except ValueError:
+        last_end_touch = None
+    if start_runs > 1 or end_runs > 1:
+        return False
+    if first_start_touch is None or last_end_touch is None:
+        return False
+    # Must be close to edges
+    edge_window = max(1, int(edge_frac * n))
+    if first_start_touch > edge_window:
+        return False
+    if (n - 1 - last_end_touch) > edge_window:
+        return False
+    # Also avoid that we keep touching start near the end or end near the beginning (overlap)
+    if any(start_near[int(0.5*n):]):  # start buffer shouldn't reappear in latter half
+        return False
+    if any(end_near[:int(0.5*n)]):    # end buffer shouldn't appear in first half
+        return False
+    return True
 def haversine_distance(p1: Tuple[float, float], p2: Tuple[float, float]) -> float:
     """Compute the haversine distance (in meters) between two (lat, lon) points."""
     radius = 6371000  # Earth's radius in meters
@@ -84,6 +170,7 @@ def load_reference_segments(folder: str) -> Dict[str, List[Dict[str, Any]]]:
     for filename in os.listdir(folder):
         if filename.lower().endswith('.gpx'):
             filepath = os.path.join(folder, filename)
+            log_gpx_input_stats(filepath, f"Reference {filename}")
             pts = load_gpx_points(filepath)
             if pts:
                 segments[filename] = pts
@@ -132,7 +219,7 @@ def resample_points(points: List[Dict[str, Any]], num_samples: int) -> List[Tupl
                 lat = points[j]['lat'] + r * (points[j+1]['lat'] - points[j]['lat'])
                 lon = points[j]['lon'] + r * (points[j+1]['lon'] - points[j]['lon'])
                 new_pts.append((lat, lon))
-    logging.debug("Resampled from %d to %d points.", len(points), num_samples)
+    #logging.debug("Resampled from %d to %d points.", len(points), num_samples)
     return new_pts
 
 def compute_bounding_box(points: List[Dict[str, Any]]) -> Tuple[float, float, float, float]:
@@ -156,10 +243,10 @@ def point_in_bbox(point: Dict[str, Any], bbox: Tuple[float, float, float, float]
     return (min_lat <= lat <= max_lat) and (min_lon <= lon <= max_lon)
 
 def refine_boundaries_using_warping_path(recorded_points: List[Dict[str, Any]],
-                                         candidate_start: int,
-                                         candidate_end: int,
-                                         ref_resampled: List[Tuple[float, float]],
-                                         resample_count: int) -> Tuple[int, int]:
+                         candidate_start: int,
+                         candidate_end: int,
+                         ref_resampled: List[Tuple[float, float]],
+                         resample_count: int) -> Tuple[int, int]:
     """
     Use the DTW warping path from the candidate segment (resampled) to determine indices in recorded_points
     that best align with the reference's start and end.
@@ -354,75 +441,160 @@ def find_all_segment_matches(recorded_points: List[Dict[str, Any]],
                              dtw_threshold: float,
                              resample_count: int,
                              min_gap: int = 1,
-                             bbox_margin_m: float = 30) -> List[Tuple[int, int, float]]:
+                             bbox_margin_m: float = 30,
+                             bbox_margin_overall_m: float | None = None,
+                             dump_pattern: Optional[str] = None,
+                             ref_name: Optional[str] = None) -> List[Tuple[int, int, float, int, int]]:
     """
-    Find candidate matching segments in the recorded track for a given reference segment.
-    
-    Candidate windows are determined using cumulative distances (within candidate_margin)
-    and restricted to those with endpoints inside an expanded bounding box (margin: bbox_margin_m).
-    For candidates with DTW cost below dtw_threshold, a preliminary refinement using warping-path is applied.
-    
-    Returns a list of tuples (refined_start, refined_end, dtw_avg).
+    Three-bbox candidate search with logging and pre-counting of DTW candidates.
+    See docstring in patch description for details.
     """
     assert recorded_points, "Recorded track must contain points."
     assert ref_points, "Reference segment must contain points."
-    assert candidate_margin > 0, "Candidate margin must be positive."
-    assert dtw_threshold > 0, "DTW threshold must be positive."
-    assert resample_count >= 2, "Resample count must be at least 2."
+    assert candidate_margin > 0, "candidate_margin must be positive."
+    assert resample_count >= 2, "resample_count must be at least 2."
+
     ref_total_distance = compute_total_distance(ref_points)
     ref_resampled = resample_points(ref_points, resample_count)
+
+    # Build bboxes
     ref_bbox = compute_bounding_box(ref_points)
-    expanded_bbox = expand_bounding_box(ref_bbox, margin_m=bbox_margin_m)
+    overall_margin = bbox_margin_overall_m if (bbox_margin_overall_m is not None) else bbox_margin_m
+    bbox_overall = expand_bounding_box(ref_bbox, margin_m=overall_margin)
+
+    ref_start = {'lat': ref_points[0]['lat'], 'lon': ref_points[0]['lon']}
+    ref_end   = {'lat': ref_points[-1]['lat'], 'lon': ref_points[-1]['lon']}
+    bbox_start = expand_bounding_box((ref_start['lat'], ref_start['lat'], ref_start['lon'], ref_start['lon']), margin_m=bbox_margin_m)
+    bbox_end   = expand_bounding_box((ref_end['lat'],   ref_end['lat'],   ref_end['lon'],   ref_end['lon']),   margin_m=bbox_margin_m)
+
+    # Precompute cumulative distances and "outside overall bbox" prefix sum
     rec_cum_dists: List[float] = [0.0]
-    for i in range(1, len(recorded_points)):
-        d = haversine_distance((recorded_points[i-1]['lat'], recorded_points[i-1]['lon']),
-                               (recorded_points[i]['lat'], recorded_points[i]['lon']))
-        rec_cum_dists.append(rec_cum_dists[-1] + d)
-    matches: List[Tuple[int, int, float]] = []
-    rec_length = len(recorded_points)
-    start = 0
-    while start < rec_length - 1:
-        if not point_in_bbox(recorded_points[start], expanded_bbox):
-            start += 1
-            continue
-        lower_target = rec_cum_dists[start] + ref_total_distance * (1 - candidate_margin)
-        upper_target = rec_cum_dists[start] + ref_total_distance * (1 + candidate_margin)
-        lower_end = bisect.bisect_left(rec_cum_dists, lower_target, lo=start+1, hi=rec_length)
-        upper_end = bisect.bisect_right(rec_cum_dists, upper_target, lo=start+1, hi=rec_length)
-        logging.debug("Start index %d: candidate endpoints in range [%d, %d)", start, lower_end, upper_end)
-        candidate_range_length = upper_end - lower_end
-        dynamic_stride = max(1, candidate_range_length // 10)
-        best_dtw = float('inf')
-        best_candidate = None
-        candidate_found = False
-        for end in range(lower_end, upper_end, dynamic_stride):
-            if not (point_in_bbox(recorded_points[start], expanded_bbox) and 
-                    point_in_bbox(recorded_points[end], expanded_bbox)):
+    outside = [0] * len(recorded_points)
+    for i in range(len(recorded_points)):
+        if not point_in_bbox(recorded_points[i], bbox_overall):
+            outside[i] = 1
+        if i > 0:
+            d = haversine_distance((recorded_points[i-1]['lat'], recorded_points[i-1]['lon']),
+                                   (recorded_points[i]['lat'], recorded_points[i]['lon']))
+            rec_cum_dists.append(rec_cum_dists[-1] + d)
+    # prefix sum of "outside" to quickly check segments
+    pref_out = [0] * (len(recorded_points) + 1)
+    for i, v in enumerate(outside, start=1):
+        pref_out[i] = pref_out[i-1] + v
+
+    # Phase 1: enumerate candidate (s,e) pairs
+    n = len(recorded_points)
+    import bisect as _bis
+
+    start_inside = [point_in_bbox(recorded_points[i], bbox_start) for i in range(n)]
+    # Log contiguous runs of start_inside == True
+    runs = []
+    run_s = None
+    for i, flag in enumerate(start_inside + [False]):  # sentinel to flush
+        if flag and run_s is None:
+            run_s = i
+        elif not flag and run_s is not None:
+            runs.append((run_s, i-1))
+            run_s = None
+
+    if logging.getLogger().isEnabledFor(logging.INFO):
+        if runs:
+            logging.info("Start-bbox runs (inclusive indices): %s", ", ".join(f"[{a},{b}]" for a,b in runs))
+        else:
+            logging.info("No points in recorded track lie within start-bbox; skipping.")
+
+    candidates: List[Tuple[int,int]] = []
+    runs_and_candidates: List[Tuple[int, Tuple[int,int], List[Tuple[int,int]]]] = []
+    # For each start index s inside start-bbox, compute e-range by distance window and filter
+    for (rs, re) in runs:
+        run_candidates_before_filter = 0
+        accepted_in_run = 0
+        # We will log the union of [e_lo, e_hi) ranges for the run
+        e_ranges = []
+        s = rs
+        run_cands: List[Tuple[int,int]] = []
+        while s <= re:
+            if not start_inside[s]:
+                s += 1
                 continue
-            candidate_segment = recorded_points[start:end+1]
-            if len(candidate_segment) < 2:
+            lower = rec_cum_dists[s] + ref_total_distance * (1 - candidate_margin)
+            upper = rec_cum_dists[s] + ref_total_distance * (1 + candidate_margin)
+            e_lo = _bis.bisect_left(rec_cum_dists, lower, lo=s+1, hi=n-1)
+            e_hi = _bis.bisect_right(rec_cum_dists, upper, lo=s+1, hi=n-1)
+            if e_lo < e_hi:
+                e_ranges.append((e_lo, e_hi))
+            run_candidates_before_filter += max(0, e_hi - e_lo)
+
+            for e in range(e_lo, e_hi):
+                # end must be in end-bbox
+                if not point_in_bbox(recorded_points[e], bbox_end):
+                    continue
+                # All points between s..e must lie within overall bbox
+                outside_cnt = pref_out[e+1] - pref_out[s]
+                if outside_cnt != 0:
+                    continue
+                if e <= s:
+                    continue
+                candidates.append((s, e))
+                run_cands.append((s, e))
+                accepted_in_run += 1
+            s += 1
+
+        if logging.getLogger().isEnabledFor(logging.INFO):
+            if e_ranges:
+                # merge overlapping e_ranges for clearer logging
+                e_ranges.sort()
+                merged = []
+                for a,b in e_ranges:
+                    if not merged or a > merged[-1][1]:
+                        merged.append([a,b])
+                    else:
+                        merged[-1][1] = max(merged[-1][1], b)
+                e_ranges_str = ", ".join(f"[{a},{b})" for a,b in merged)
+                logging.info("For start-run [%d,%d], end-index windows by distance: %s", rs, re, e_ranges_str)
+            logging.info("Run [%d,%d]: %d distance-window pairs pre-filter; %d candidates after bbox filters.",
+                         rs, re, run_candidates_before_filter, accepted_in_run)
+            if accepted_in_run == 0:
+                logging.info("Run [%d,%d] produced no valid end candidates; discarding this start-bbox excursion.", rs, re)
+            else:
+                runs_and_candidates.append((len(runs_and_candidates), (rs, re), run_cands))
+
+    if dump_pattern and runs_and_candidates and ref_name:
+        try:
+            export_candidate_runs_to_gpx(recorded_points, runs_and_candidates, ref_name, dump_pattern)
+        except Exception as ex:
+            logging.warning("Failed to dump candidate runs to GPX: %s", ex)
+    total_candidates = len(candidates)
+    if logging.getLogger().isEnabledFor(logging.INFO):
+        logging.info("Total DTW candidates to assess: %d", total_candidates)
+
+    # Early exit
+    if total_candidates == 0:
+        return []
+
+    # Phase 2: compute DTW best per run (not global), then return list of per-run winners.
+    matches: List[Tuple[int, int, float, int, int]] = []
+    for run_idx, (rs, re), run_cands in runs_and_candidates:
+        best = None  # (avg_cost, s, e)
+        for s, e in run_cands:
+            cand_pts = recorded_points[s:e+1]
+            if len(cand_pts) < 2:
                 continue
-            candidate_resampled = resample_points(candidate_segment, resample_count)
-            dtw_distance, _ = fastdtw(candidate_resampled, ref_resampled, dist=haversine_distance)
-            dtw_avg = dtw_distance / resample_count
-            logging.debug("Candidate from %d to %d: dtw_avg=%.2f", start, end+1, dtw_avg)
-            if dtw_avg < best_dtw:
-                best_dtw = dtw_avg
-                best_candidate = end
-            if dtw_avg > best_dtw * 1.01:
-                logging.debug("Early termination at candidate %d.", end)
-                break
-            if dtw_avg < dtw_threshold:
-                refined_start, refined_end = refine_boundaries_using_warping_path(
-                    recorded_points, start, end+1, ref_resampled, resample_count)
-                matches.append((refined_start, refined_end, dtw_avg))
-                logging.info("Preliminary match found from %d to %d with dtw_avg=%.2f", refined_start, refined_end, dtw_avg)
-                start = end + min_gap
-                candidate_found = True
-                break
-        if not candidate_found:
-            start += 1
+            cand_resampled = resample_points(cand_pts, resample_count)
+            dtw_distance, _ = fastdtw(cand_resampled, ref_resampled, dist=haversine_distance)
+            avg_cost = dtw_distance / resample_count
+            logging.debug("DTW for run=%d s=%d e=%d: total %f, avg %f.", run_idx, s, e, dtw_distance, avg_cost)
+            if best is None or avg_cost < best[0]:
+                best = (avg_cost, s, e)
+        if best is not None and best[0] < dtw_threshold:
+            avg_cost, s_idx, e_idx = best
+            matches.append((s_idx, e_idx+1, avg_cost, s_idx, e_idx+1))
+            logging.info("Run %d winner: s=%d e=%d (exclusive), dtw_avg=%.2f", run_idx, s_idx, e_idx+1, avg_cost)
+        else:
+            logging.info("Run %d had no DTW winner under threshold (%.2f).", run_idx, dtw_threshold)
     return matches
+
+
 
 def measure_segment_time(recorded_points: List[Dict[str, Any]],
                          start_idx: int,
@@ -430,7 +602,9 @@ def measure_segment_time(recorded_points: List[Dict[str, Any]],
     """
     Compute the elapsed time (in seconds) between the first and last point of a segment.
     """
-    assert 0 <= start_idx < end_idx <= len(recorded_points), "Invalid indices."
+    if not (0 <= start_idx < end_idx <= len(recorded_points)):
+        logging.warning("Invalid indices for time measurement: start=%s end=%s len(points)=%s", start_idx, end_idx, len(recorded_points))
+        return None
     start_time = recorded_points[start_idx]['time']
     end_time = recorded_points[end_idx - 1]['time']
     if start_time and end_time:
@@ -580,6 +754,8 @@ def main() -> None:
                         help="Output file path (required for CSV and XLSX outputs).")
     parser.add_argument("--candidate-margin", type=float, default=0.2,
                         help="Allowed variation (fraction) in candidate segment distance relative to reference.")
+    parser.add_argument("--allow-length-mismatch", action="store_true",
+                        help="Allow final detected segment length to differ from reference beyond candidate-margin without rejecting the match.")
     parser.add_argument("--dtw-threshold", type=float, default=50,
                         help="Maximum allowed average DTW distance (m per resampled point) for a match.")
     parser.add_argument("--resample-count", type=int, default=50,
@@ -587,7 +763,15 @@ def main() -> None:
     parser.add_argument("--min-gap", type=int, default=1,
                         help="Minimum number of recorded points to skip after a match.")
     parser.add_argument("--bbox-margin", type=float, default=30,
-                        help="Margin (in meters) for expanding the reference bounding box and for endpoint tolerance.")
+                        help="Endpoint bbox expansion (meters) for start/end checks.")
+    parser.add_argument("--bbox-margin-overall", type=float, default=None,
+                        help="Overall bbox expansion (meters) for containment check. If not set, defaults to --bbox-margin.")
+    parser.add_argument("--single-passage", action="store_true",
+                        help="Enforce that within the detected segment the trajectory enters the start buffer once at the beginning and the end buffer once at the end.")
+    parser.add_argument("--passage-radius", type=float, default=30.0,
+                        help="Radius in meters for start/end buffers used by --single-passage (defaults close to bbox-margin).")
+    parser.add_argument("--passage-edge-frac", type=float, default=0.10,
+                        help="How close to the segment edges the start/end buffer touches must occur (fraction of point count).")
     parser.add_argument("--refine-window", type=int, default=5,
                         help="Window size (in points) for initial shape-based boundary refinement.")
     parser.add_argument("--iterative-window-start", type=int, default=50,
@@ -604,9 +788,13 @@ def main() -> None:
                         help="Local sliding window (in points) for refining the start boundary.")
     parser.add_argument("--endpoint-window-end", type=int, default=1000,
                         help="Local sliding window (in points) for refining the end boundary.")
+    parser.add_argument("--no-refinement", action="store_true",
+                        help="Disable final boundary refinements; use DTW-selected candidate indices as the result.")
     # New flag: by default segments are rejected when boundaries deviate beyond --bbox-margin.
     parser.add_argument("--no-rejection", action="store_true",
                         help="Do not reject segments that deviate beyond --bbox-margin (only log a warning).")
+    parser.add_argument("--skip-endpoint-checks", action="store_true",
+                        help="Alias to disable endpoint deviation rejection (sets --no-rejection)."),
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Enable verbose logging (INFO level).")
     parser.add_argument("-d", "--debug", action="store_true",
@@ -615,7 +803,11 @@ def main() -> None:
                         help="Export matched segments as individual GPX tracks.")
     parser.add_argument("--export-gpx-file", default="matched_segments.gpx",
                         help="Output GPX file for exporting matched segments.")
+    parser.add_argument("--dump-candidates-gpx", default=None,
+                        help="If set, dumps per start-bbox run the candidate segments (after bbox filters) into GPX files. Use placeholders {ref}, {run}, {rs}, {re}, {n}.")
     args = parser.parse_args()
+    if getattr(args, 'skip_endpoint_checks', False):
+        args.no_rejection = True
 
     log_level = logging.WARNING
     if args.verbose:
@@ -628,6 +820,7 @@ def main() -> None:
         parser.error("Output file must be provided for CSV or XLSX outputs.")
 
     logging.info("Loading recorded track: %s", args.recorded)
+    log_gpx_input_stats(args.recorded, "Recorded")
     recorded_points = load_gpx_points(args.recorded)
     if not recorded_points:
         logging.error("No points found in recorded GPX file: %s", args.recorded)
@@ -668,7 +861,10 @@ def main() -> None:
             dtw_threshold=args.dtw_threshold,
             resample_count=args.resample_count,
             min_gap=args.min_gap,
-            bbox_margin_m=args.bbox_margin
+            bbox_margin_m=args.bbox_margin,
+            bbox_margin_overall_m=(args.bbox_margin_overall if hasattr(args, 'bbox_margin_overall') else None),
+            dump_pattern=args.dump_candidates_gpx,
+            ref_name=seg_filename
         )
         if not matches:
             logging.info("No matching segments found for reference '%s'.", seg_filename)
@@ -678,19 +874,57 @@ def main() -> None:
         ref_start_sub = resample_points(ref_points[0:L], L)
         ref_end_sub = resample_points(ref_points[-L:], L)
 
-        for (start_idx, end_idx, dtw_avg) in matches:
-            refined_start, refined_end = refine_boundaries_using_warping_path(
+        if args.no_refinement:
+            final_start, final_end = start_idx, end_idx
+            used_fallback = False
+        for (start_idx, end_idx, dtw_avg, orig_start, orig_end) in matches:
+            if not args.no_refinement:
+                refined_start, refined_end = refine_boundaries_using_warping_path(
                 recorded_points, start_idx, end_idx, current_ref_resampled, args.resample_count)
-            grid_start, grid_end = refine_boundaries_iteratively(
+            if not args.no_refinement:
+                grid_start, grid_end = refine_boundaries_iteratively(
                 recorded_points, refined_start, refined_end,
                 ref_start_coords, ref_end_coords, ref_distance, rec_cum_dists,
                 iterative_window_start=args.iterative_window_start,
                 iterative_window_end=args.iterative_window_end,
                 penalty_weight=args.penalty_weight)
-            final_start = refine_endpoint_boundary(recorded_points, grid_start, ref_start_sub, L, args.endpoint_window_start, True)
-            final_end = refine_endpoint_boundary(recorded_points, grid_end - 1, ref_end_sub, L, args.endpoint_window_end, False) + 1
+            if not args.no_refinement:
+                final_start = refine_endpoint_boundary(recorded_points, grid_start, ref_start_sub, L, args.endpoint_window_start, True)
+            if not args.no_refinement:
+                final_end = refine_endpoint_boundary(recorded_points, grid_end - 1, ref_end_sub, L, args.endpoint_window_end, False) + 1
+            # Fallback if refinement breaks monotonicity/length
+            used_fallback = False
+            if final_end <= final_start:
+                logging.warning("Refinement produced end<=start; falling back to original candidate [%d,%d).", orig_start, orig_end)
+                final_start, final_end = orig_start, orig_end
+                used_fallback = True
 
             detected_distance = rec_cum_dists[final_end] - rec_cum_dists[final_start]
+            if detected_distance <= 0 and not used_fallback:
+                logging.warning("Refinement produced non-positive length; falling back to original candidate [%d,%d).", orig_start, orig_end)
+                final_start, final_end = orig_start, orig_end
+                detected_distance = rec_cum_dists[final_end] - rec_cum_dists[final_start]
+                used_fallback = True
+            if final_end <= final_start:
+                logging.warning("Rejected match for '%s': end index (%d) <= start index (%d).", seg_filename, final_end, final_start)
+                continue
+            if detected_distance <= 0:
+                logging.warning("Rejected match for '%s': non-positive detected distance %.2f m.", seg_filename, detected_distance)
+                continue
+            length_ratio = detected_distance / ref_distance if ref_distance > 0 else float('inf')
+            min_ratio = 1.0 - args.candidate_margin
+            max_ratio = 1.0 + args.candidate_margin
+            if not args.allow_length_mismatch and not (min_ratio <= length_ratio <= max_ratio):
+                if not used_fallback:
+                    logging.warning("Refined match violates length window; falling back to original candidate [%d,%d).", orig_start, orig_end)
+                    final_start, final_end = orig_start, orig_end
+                    detected_distance = rec_cum_dists[final_end] - rec_cum_dists[final_start]
+                    length_ratio = detected_distance / ref_distance if ref_distance > 0 else float('inf')
+                    used_fallback = True
+                if not (min_ratio <= length_ratio <= max_ratio):
+                    logging.warning("Rejected match for '%s': length ratio %.3f outside [%.3f, %.3f] (detected %.2f m vs ref %.2f m).",
+                                    seg_filename, length_ratio, min_ratio, max_ratio, detected_distance, ref_distance)
+                    continue
             detected_start_coords = (recorded_points[final_start]['lat'], recorded_points[final_start]['lon'])
             detected_end_coords = (recorded_points[final_end - 1]['lat'], recorded_points[final_end - 1]['lon'])
             start_diff = haversine_distance(detected_start_coords, ref_start_coords)
@@ -702,6 +936,24 @@ def main() -> None:
             logging.info("Detected segment length for '%s' is %.2f m; Reference segment length is %.2f m.",
                          seg_filename, detected_distance, ref_distance)
             if (start_diff > args.bbox_margin or end_diff > args.bbox_margin) and not args.no_rejection:
+                if not used_fallback:
+                    logging.warning("Refined boundaries deviate; falling back to original candidate [%d,%d).", orig_start, orig_end)
+                    final_start, final_end = orig_start, orig_end
+                    detected_start_coords = (recorded_points[final_start]['lat'], recorded_points[final_start]['lon'])
+                    detected_end_coords = (recorded_points[final_end - 1]['lat'], recorded_points[final_end - 1]['lon'])
+                    start_diff = haversine_distance(detected_start_coords, ref_start_coords)
+                    end_diff = haversine_distance(detected_end_coords, ref_end_coords)
+                    used_fallback = True
+                
+                if args.single_passage:
+                    ok = enforce_single_passage(recorded_points, final_start, final_end,
+                                              ref_start_coords, ref_end_coords,
+                                              radius_m=args.passage_radius,
+                                              edge_frac=args.passage_edge_frac)
+                    if not ok:
+                        logging.warning("Rejected match for '%s' by single-passage check (radius=%.1f m, edge_frac=%.2f).",
+                                        seg_filename, args.passage_radius, args.passage_edge_frac)
+                        continue
                 logging.warning("Detected boundaries for '%s' deviate: start_diff=%.2f m, end_diff=%.2f m (limit: %.2f m).",
                                 seg_filename, start_diff, end_diff, args.bbox_margin)
                 continue
@@ -738,4 +990,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
