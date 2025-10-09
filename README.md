@@ -102,6 +102,9 @@ Example how to run it on test data:
 
 ```./gpx-segment-timer.py -v -f segments -r example.gpx  --export-gpx```
 
+```./gpx-segment-timer.py -v -f segments -r example.gpx --export-gpx --candidate-margin 0.05 --bbox-margin 20 --bbox-margin-overall 100 --resample-count 100```
+
+
 ## Tuning Tips
 
 - **Adjust Global Matching**  
