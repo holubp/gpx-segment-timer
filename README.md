@@ -81,7 +81,7 @@ Run from the command line:
 | `--resample-count` | Number of points to use for resampling segments (default: `50`). |
 | `--min-gap` | Minimum number of recorded points to skip after a match (default: `1`). |
 | `--bbox-margin` | Allowed endpoint deviation (in meters) from reference (default: `30`). |
-| `--bbox-margin-overall` | Overall bounding box margin (default: same as `--bbox-margin`). |
+| `--bbox-margin-overall` | Overall bounding box margin (default: `100`). |
 | `--iterative-window-start` | Search window for start refinement (default: `20`). |
 | `--iterative-window-end` | Search window for end refinement (default: `20`). |
 | `--penalty-weight` | Weight for Euclidean endpoint penalty during refinement (default: `2.0`). |
