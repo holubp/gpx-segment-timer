@@ -349,6 +349,7 @@ def refine_boundaries_iteratively(recorded_points: List[Dict[str, Any]],
     i_max = min(len(recorded_points) - 2, initial_start + iterative_window_start)
     j_min = max(initial_end - iterative_window_end, i_min + 2)
     j_max = min(len(recorded_points), initial_end + iterative_window_end)
+    logging.debug("Iterative refinement: start in range [%d,%d], end in range [%d,%d].", i_min, i_max, j_min, j_max)
     for i in range(i_min, i_max + 1):
         for j in range(j_min, j_max + 1):
             if j <= i + 1:
@@ -362,6 +363,7 @@ def refine_boundaries_iteratively(recorded_points: List[Dict[str, Any]],
                 best_cost = cost
                 best_i = i
                 best_j = j
+    logging.debug("Best match of iterative refinement: start %d, end %d, best cost %f.", best_i, best_j, best_cost)
     return best_i, best_j
 
 def refine_boundaries_with_endpoint_anchoring(recorded_points: List[Dict[str, Any]],
@@ -758,13 +760,13 @@ def main() -> None:
                         help="Allow final detected segment length to differ from reference beyond candidate-margin without rejecting the match.")
     parser.add_argument("--dtw-threshold", type=float, default=50,
                         help="Maximum allowed average DTW distance (m per resampled point) for a match.")
-    parser.add_argument("--resample-count", type=int, default=50,
+    parser.add_argument("--resample-count", type=int, default=200,
                         help="Number of points for resampling segments.")
     parser.add_argument("--min-gap", type=int, default=1,
                         help="Minimum number of recorded points to skip after a match.")
     parser.add_argument("--bbox-margin", type=float, default=30,
                         help="Endpoint bbox expansion (meters) for start/end checks.")
-    parser.add_argument("--bbox-margin-overall", type=float, default=None,
+    parser.add_argument("--bbox-margin-overall", type=float, default=100,
                         help="Overall bbox expansion (meters) for containment check. If not set, defaults to --bbox-margin.")
     parser.add_argument("--single-passage", action="store_true",
                         help="Enforce that within the detected segment the trajectory enters the start buffer once at the beginning and the end buffer once at the end.")
@@ -774,9 +776,9 @@ def main() -> None:
                         help="How close to the segment edges the start/end buffer touches must occur (fraction of point count).")
     parser.add_argument("--refine-window", type=int, default=5,
                         help="Window size (in points) for initial shape-based boundary refinement.")
-    parser.add_argument("--iterative-window-start", type=int, default=50,
+    parser.add_argument("--iterative-window-start", type=int, default=20,
                         help="Search window (in points) for adjusting the start boundary independently.")
-    parser.add_argument("--iterative-window-end", type=int, default=50,
+    parser.add_argument("--iterative-window-end", type=int, default=20,
                         help="Search window (in points) for adjusting the end boundary independently.")
     parser.add_argument("--penalty-weight", type=float, default=2.0,
                         help="Weight for the Euclidean endpoint penalty in grid refinement (formerly lambda-weight).")
@@ -874,30 +876,27 @@ def main() -> None:
         ref_start_sub = resample_points(ref_points[0:L], L)
         ref_end_sub = resample_points(ref_points[-L:], L)
 
-        if args.no_refinement:
-            final_start, final_end = start_idx, end_idx
-            used_fallback = False
         for (start_idx, end_idx, dtw_avg, orig_start, orig_end) in matches:
-            if not args.no_refinement:
-                refined_start, refined_end = refine_boundaries_using_warping_path(
-                recorded_points, start_idx, end_idx, current_ref_resampled, args.resample_count)
-            if not args.no_refinement:
+            if args.no_refinement:
+                logging.info("Skipping refinement", orig_start, orig_end)
+                final_start, final_end = start_idx, end_idx
+                used_fallback = False
+            else:
+                refined_start, refined_end = refine_boundaries_using_warping_path(recorded_points, start_idx, end_idx, current_ref_resampled, args.resample_count)
                 grid_start, grid_end = refine_boundaries_iteratively(
-                recorded_points, refined_start, refined_end,
-                ref_start_coords, ref_end_coords, ref_distance, rec_cum_dists,
-                iterative_window_start=args.iterative_window_start,
-                iterative_window_end=args.iterative_window_end,
-                penalty_weight=args.penalty_weight)
-            if not args.no_refinement:
+                        recorded_points, refined_start, refined_end,
+                        ref_start_coords, ref_end_coords, ref_distance, rec_cum_dists,
+                        iterative_window_start=args.iterative_window_start,
+                        iterative_window_end=args.iterative_window_end,
+                        penalty_weight=args.penalty_weight)
                 final_start = refine_endpoint_boundary(recorded_points, grid_start, ref_start_sub, L, args.endpoint_window_start, True)
-            if not args.no_refinement:
                 final_end = refine_endpoint_boundary(recorded_points, grid_end - 1, ref_end_sub, L, args.endpoint_window_end, False) + 1
-            # Fallback if refinement breaks monotonicity/length
-            used_fallback = False
-            if final_end <= final_start:
-                logging.warning("Refinement produced end<=start; falling back to original candidate [%d,%d).", orig_start, orig_end)
-                final_start, final_end = orig_start, orig_end
-                used_fallback = True
+                # Fallback if refinement breaks monotonicity/length
+                used_fallback = False
+                if final_end <= final_start:
+                    logging.warning("Refinement produced end<=start; falling back to original candidate [%d,%d).", orig_start, orig_end)
+                    final_start, final_end = orig_start, orig_end
+                    used_fallback = True
 
             detected_distance = rec_cum_dists[final_end] - rec_cum_dists[final_start]
             if detected_distance <= 0 and not used_fallback:
