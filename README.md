@@ -1,176 +1,213 @@
 # GPX Segment Timer
 
-The **GPX Segment Timer** is a Python tool for measuring elapsed time on specific segments within a recorded GPX track by comparing them against reference segment files.  
-It is designed to handle varying sampling rates, nonuniform point counts, and repeated laps robustly.
+GPX Segment Timer is a Python CLI that measures elapsed time on reference GPX segments inside a recorded GPX track. It is built for uneven sampling rates, repeated laps, self-intersections, overlapping segments, and noisy GPS.
 
 ---
 
-## Overview
+## How It Works
 
-The script performs **multi-stage matching and refinement**:
+The matcher uses a multi-stage pipeline that is translation-tolerant but spatially bounded:
 
-1. **Coarse Candidate Selection**  
-   Based on cumulative distance and bounding boxes around reference segment endpoints.  
-   Candidates are generated for each start–end combination within the `--candidate-margin` distance window.
+1) **Coarse candidate selection**
+   - Finds recorded points near the reference start/end using endpoint and overall bounding boxes.
+   - Generates candidate windows using cumulative distance with a `--candidate-margin` tolerance.
 
-2. **DTW-Based Refinement**  
-   Each candidate is uniformly resampled (`--resample-count`) and compared to the reference using **Dynamic Time Warping (DTW)**.  
-   Candidates with average DTW distance below `--dtw-threshold` are accepted.
+2) **Shape matching (DTW)**
+   - Compares candidate windows to the reference using DTW on translation-invariant shape sequences.
+   - Shape modes: step vectors, heading, or centered coordinates.
 
-3. **Iterative Grid Search**  
-   Candidate start/end indices are refined using a distance-based grid search within `--iterative-window-start` / `--iterative-window-end`,  
-   with a penalty (`--penalty-weight`) for endpoint distance deviation.
+3) **Boundary refinement**
+   - DTW warping path anchoring, iterative grid search, and endpoint refinement.
 
-4. **Endpoint Anchoring (Local Refinement)**  
-   A local sliding-window optimization (`--endpoint-window-start`, `--endpoint-window-end`) anchors start and end subsegments  
-   to match the reference endpoints more precisely.
+4) **Start/finish line crossings**
+   - Start/finish lines are perpendicular to the first/last segment vectors.
+   - Lines are finite segments (default total length 8m) and can be tuned.
+   - Crossing points are interpolated between bracket points.
 
-5. **Optional Single-Passage Check**  
-   Ensures the detected segment only touches the start and end buffers once — useful for tracks with self-intersections.
+5) **Crossing disambiguation by shape**
+   - When lines intersect multiple times (tight kinks near the start/finish), local and full-segment shape matching disambiguate the correct crossings.
 
-Segments with endpoint deviations larger than `--bbox-margin` meters are rejected by default, unless `--no-rejection` is used.
-
----
-
-## Features
-
-- Multi-stage matching with **DTW + endpoint refinement**
-- **Resampling-independent** comparison of track shapes
-- Adjustable distance, DTW, and endpoint tolerances
-- **Candidate dump and GPX export** for debugging
-- Output in **stdout**, **CSV**, or **XLSX**
+6) **Output + GPX export**
+   - Emits results to stdout/CSV/XLSX.
+   - Optional GPX export includes matched window, reference segment, start/finish lines, and crossing points (with interpolation annotations).
 
 ---
 
 ## Installation
 
-Requires Python 3 and the following libraries:
+Requires Python 3 and:
 
-    pip install gpxpy fastdtw openpyxl
+```
+pip install gpxpy fastdtw openpyxl
+```
 
 ---
 
 ## Usage
 
-Run from the command line:
-
-    ./gpx-segment-timer.py -r <recorded_track.gpx> -f <reference_folder> [OPTIONS]
+```
+./gpx-segment-timer.py -r <recorded_track.gpx> -f <reference_folder> [OPTIONS]
+```
 
 ---
 
-### Input / Output Options
+## Command Line Options
+
+### Input / Output
 
 | Option | Description |
-|--------|--------------|
-| `-r, --recorded` | Path to the recorded GPX file. |
-| `-f, --reference-folder` | Folder containing reference segment GPX files. |
-| `-o, --output-mode` | Output format: `stdout` (default), `csv`, or `xlsx`. |
-| `-O, --output-file` | Output file path (required for CSV/XLSX). |
-| `--export-gpx` | Export matched segments as GPX tracks. |
-| `--export-gpx-file` | Base name for exported GPX files (default: `matched_segments.gpx`). |
-| `--dump-candidates-gpx` | Dump all candidate segments (after bbox filtering) into GPX files using pattern placeholders `{ref}`, `{run}`, `{rs}`, `{re}`, `{n}`. Useful for debugging. |
+|--------|-------------|
+| `-r, --recorded` | Path to recorded GPX file. |
+| `-f, --reference-folder` | Folder with reference segment GPX files. |
+| `-o, --output-mode` | `stdout` (default), `csv`, or `xlsx`. |
+| `-O, --output-file` | Output file path for CSV/XLSX. |
+| `--export-gpx` | Export matched segments as GPX. |
+| `--export-gpx-file` | Base name for exported GPX files. |
+| `--dump-candidates-gpx` | Dump bbox-filtered candidates with placeholders `{ref}`, `{run}`, `{rs}`, `{re}`, `{n}`. |
 
----
-
-### Matching and Refinement Parameters
+### Matching / Refinement
 
 | Option | Description |
-|--------|--------------|
-| `--candidate-margin` | Allowed relative distance variation for candidate search (default: `0.2`). |
-| `--dtw-threshold` | Maximum allowed average DTW distance in meters per resampled point (default: `50`). |
-| `--resample-count` | Number of points to use for resampling segments (default: `50`). |
-| `--min-gap` | Minimum number of recorded points to skip after a match (default: `1`). |
-| `--bbox-margin` | Allowed endpoint deviation (in meters) from reference (default: `30`). |
-| `--bbox-margin-overall` | Overall bounding box margin (default: `100`). |
-| `--iterative-window-start` | Search window for start refinement (default: `20`). |
-| `--iterative-window-end` | Search window for end refinement (default: `20`). |
-| `--penalty-weight` | Weight for Euclidean endpoint penalty during refinement (default: `2.0`). |
-| `--anchor-beta1`, `--anchor-beta2` | Weights for DTW cost on start/end subsegments (default: `1.0`). |
-| `--endpoint-window-start`, `--endpoint-window-end` | Local window (in points) for endpoint sliding refinement (default: `1000`). |
-| `--no-refinement` | Disable all refinement steps (use DTW indices directly). |
-| `--allow-length-mismatch` | Allow larger deviation of detected vs. reference length. |
-| `--no-rejection` | Do not reject segments beyond `--bbox-margin` (only log warning). |
+|--------|-------------|
+| `--candidate-margin` | Relative distance tolerance for candidates (default `0.2`). |
+| `--allow-length-mismatch` | Allow candidates outside length window. |
+| `--dtw-threshold` | Max avg DTW cost (default `50`). |
+| `--shape-mode` | `step_vectors`, `heading`, `centered`, or `auto`. |
+| `--gps-error-m` | GPS error estimate in meters (default `12`). |
+| `--target-spacing-m` | Target meters between resampled points (default `8`). |
+| `--resample-max` | Max resample count when using target spacing (default `400`). |
+| `--resample-count` | Fixed resample count when target spacing is not used (default `200`). |
+| `--min-gap` | Minimum points to skip after a match (default `1`). |
+| `--bbox-margin` | Endpoint deviation tolerance in meters (default `30`). |
+| `--bbox-margin-overall` | Overall bbox margin in meters (default `100`). |
+| `--refine-window` | Legacy window (kept for compatibility). |
+| `--iterative-window-start` | Start refinement window (default `20`). |
+| `--iterative-window-end` | End refinement window (default `20`). |
+| `--penalty-weight` | Endpoint distance penalty during refinement (default `2.0`). |
+| `--anchor-beta1` | Start subsegment weight (default `1.0`). |
+| `--anchor-beta2` | End subsegment weight (default `1.0`). |
+| `--endpoint-window-start` | Start endpoint sliding window in points (default `1000`). |
+| `--endpoint-window-end` | End endpoint sliding window in points (default `1000`). |
+| `--endpoint-spatial-weight` | Spatial weight in endpoint refinement (default `0.25`). |
+| `--no-refinement` | Disable refinement steps. |
+| `--no-rejection` | Keep matches even if endpoint diffs exceed `--bbox-margin`. |
+| `--skip-endpoint-checks` | Skip endpoint rejection checks. |
 
----
-
-### Advanced Options
+### Start/Finish Crossing Logic
 
 | Option | Description |
-|--------|--------------|
-| `--single-passage` | Enforce single entry into start buffer and single exit from end buffer. |
-| `--passage-radius` | Radius (m) for buffers used by single-passage check (default: `30`). |
-| `--passage-edge-frac` | Fraction of segment length near edges where passage must occur (default: `0.10`). |
-| `-v, --verbose` | Enable detailed logging (INFO). |
-| `-d, --debug` | Enable debug-level logs (DEBUG). |
+|--------|-------------|
+| `--line-length-m` | Start/finish line total length in meters (default `8.0`). |
+| `--crossing-endpoint-weight` | Endpoint proximity weight when selecting crossings. |
+| `--crossing-shape-weight` | Shape weight when selecting crossings. |
+| `--crossing-shape-window-frac` | Local shape window fraction of resample count (default `0.2`). |
+| `--crossing-shape-window-min` | Minimum window size for local crossing shape matching (default `3`). |
+| `--crossing-length-weight` | Length weight for crossing selection (negative = auto). |
+| `--crossing-window-max` | Max crossing search expansion window (default `200`). |
+
+### Optional Single-Passage Check
+
+| Option | Description |
+|--------|-------------|
+| `--single-passage` | Enforce single pass through start/end buffers. |
+| `--passage-radius` | Buffer radius in meters (default `30`). |
+| `--passage-edge-frac` | Fraction of segment length for passage checks (default `0.10`). |
+
+### Logging
+
+| Option | Description |
+|--------|-------------|
+| `-v, --verbose` | INFO logs. |
+| `-d, --debug` | DEBUG logs. |
 
 ---
 
-### Example Commands
+## Examples
 
-Basic run:
+### Basic matching
 
-    ./gpx-segment-timer.py -v -f segments -r example.gpx --export-gpx
+```
+./gpx-segment-timer.py -v -f segments -r example.gpx
+```
 
-Resulting in:
+### Export GPX with start/finish lines and interpolated crossings
 
-| Segment                            | Start Idx | End Idx | Ref Dist (m) | Detected Dist (m) | DTW Avg (m) | Time (s) | Time (H:M:S) | Ref Start              | Ref End                | Start Diff (m) | End Diff (m) |
-| :--------------------------------- | --------: | ------: | -----------: | ----------------: | ----------: | -------: | :----------- | :--------------------- | :--------------------- | -------------: | -----------: |
-| automotodrom-okruh-offroad-adv.gpx |      1037 |    2721 |      4881.91 |           5384.69 |        9.87 |  1683.00 | 0:28:03      | (49.204458, 16.458708) | (49.204733, 16.458846) |          20.08 |        17.87 |
-| automotodrom-okruh-offroad-adv.gpx |      6392 |    7539 |      4881.91 |           4995.58 |        4.90 |  1146.00 | 0:19:06      | (49.204458, 16.458708) | (49.204733, 16.458846) |          22.66 |        16.03 |
-| automotodrom-okruh-offroad-adv.gpx |      8330 |    9431 |      4881.91 |           4960.26 |        4.19 |  1100.00 | 0:18:20      | (49.204458, 16.458708) | (49.204733, 16.458846) |          17.95 |         6.97 |
-| automotodrom-okruh-offroad-les.gpx |      2191 |    2594 |      1546.04 |           1520.37 |        1.81 |   402.00 | 0:06:42      | (49.204479, 16.459172) | (49.204745, 16.461521) |          27.07 |        24.10 |
-| automotodrom-okruh-offroad-les.gpx |      7021 |    7430 |      1546.04 |           1529.81 |        1.77 |   408.00 | 0:06:48      | (49.204479, 16.459172) | (49.204745, 16.461521) |          22.08 |        22.25 |
-| automotodrom-okruh-offroad-les.gpx |      8991 |    9334 |      1546.04 |           1519.41 |        2.04 |   342.00 | 0:05:42      | (49.204479, 16.459172) | (49.204745, 16.461521) |          13.03 |        25.69 |
-| automotodrom-okruh-offroad.gpx     |      1037 |    2721 |      4940.61 |           5384.69 |        9.53 |  1683.00 | 0:28:03      | (49.204458, 16.458708) | (49.204733, 16.458846) |          20.08 |        17.87 |
-| automotodrom-okruh-offroad.gpx     |      6392 |    7539 |      4940.61 |           4995.58 |        4.01 |  1146.00 | 0:19:06      | (49.204458, 16.458708) | (49.204733, 16.458846) |          22.66 |        16.03 |
-| automotodrom-okruh-offroad.gpx     |      8330 |    9431 |      4940.61 |           4960.26 |        4.18 |  1100.00 | 0:18:20      | (49.204458, 16.458708) | (49.204733, 16.458846) |          17.95 |         6.97 |
+```
+./gpx-segment-timer.py -v -f segments -r example.gpx \
+  --export-gpx --export-gpx-file matched_segments.gpx
+```
 
-| Column                | Meaning                                                                                                                                                           |
-| :-------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Segment**           | Name of the reference GPX file (segment) that was matched against the recorded track. Each match corresponds to one detected traversal of that reference segment. |
-| **Start Idx**         | Index (zero-based) of the first GPX point in the recorded track where the detected segment starts.                                                                |
-| **End Idx**           | Index of the last GPX point of the detected segment (exclusive). The segment consists of all points between `Start Idx` and `End Idx – 1`.                        |
-| **Ref Dist (m)**      | Total length (in meters) of the reference segment computed from its GPX file.                                                                                     |
-| **Detected Dist (m)** | Distance (in meters) of the detected segment in the recorded track, measured between the matched start and end indices.                                           |
-| **DTW Avg (m)**       | Average Dynamic Time Warping distance per resampled point between the reference and detected segment; measures geometric similarity (lower = better match).       |
-| **Time (s)**          | Elapsed time in seconds between the timestamps of the first and last GPX points of the detected segment.                                                          |
-| **Time (H:M:S)**      | Same elapsed time, formatted as hours : minutes : seconds for readability.                                                                                        |
-| **Ref Start**         | Latitude/longitude coordinates of the start point of the reference segment.                                                                                       |
-| **Ref End**           | Latitude/longitude coordinates of the end point of the reference segment.                                                                                         |
-| **Start Diff (m)**    | Distance (in meters) between the reference segment’s start and the detected segment’s start in the recorded track. Indicates positional deviation of the start.   |
-| **End Diff (m)**      | Distance (in meters) between the reference segment’s end and the detected segment’s end in the recorded track. Indicates positional deviation of the end.         |
+### Tight line width for kink-heavy finishes
 
+```
+./gpx-segment-timer.py -v -f segments -r example.gpx \
+  --line-length-m 6
+```
 
-Tighter tolerance with finer curly and possibly self-intersecting segments - with debugging and candidate dump:
+### Wider line width for noisy GPS
 
-    ./gpx-segment-timer.py -v -f segments -r example.gpx \
-        --export-gpx \
-        --candidate-margin 0.005 \
-        --bbox-margin 5 \
-        --bbox-margin-overall 100 \
-        --resample-count 200 \
-        --dump-candidates-gpx "candidates-0.2_{ref}run{run}{rs}-{re}_n{n}.gpx"
+```
+./gpx-segment-timer.py -v -f segments -r example.gpx \
+  --gps-error-m 12 --line-length-m 12
+```
 
-./gpx-segment-timer.py -v -f segments -r 20250904_1852.gpx  --export-gpx --candidate-margin 0.005 --bbox-margin 5 --bbox-margin-overall 100 --resample-count 200 --endpoint-window-start 20 --endpoint-window-end 20 --dump-candidates-gpx "candidates-0.005_{ref}run{run}{rs}-{re}_n{n}.gpx"
+### Shape-sensitive crossing disambiguation
+
+```
+./gpx-segment-timer.py -v -f segments -r example.gpx \
+  --crossing-shape-weight 2.0 --crossing-shape-window-frac 0.3
+```
+
+### Higher shape fidelity for long/complex segments
+
+```
+./gpx-segment-timer.py -v -f segments -r example.gpx \
+  --target-spacing-m 5 --resample-max 600
+```
+
+### Candidate dump for debugging
+
+```
+./gpx-segment-timer.py -v -f segments -r example.gpx \
+  --dump-candidates-gpx "candidates_{ref}_run{run}_{rs}-{re}_n{n}.gpx"
+```
+
+### Single-passage validation for non-repeating segments
+
+```
+./gpx-segment-timer.py -v -f segments -r example.gpx \
+  --single-passage --passage-radius 25 --passage-edge-frac 0.1
+```
 
 ---
 
-## Tuning & Debugging Tips
+## Parameter Tuning Guidance
 
-- **Adjust Global Matching:**  
-  Tune `--candidate-margin` and `--dtw-threshold` to balance sensitivity and false matches.
+### Start/Finish Lines
+- **`--line-length-m`** controls how wide the finite line segment is.
+- Default 8m matches typical GPS +-4m accuracy.
+- Use smaller values for kink-heavy segments that intersect the line multiple times.
+- Use larger values for noisy recordings where line crossings are offset.
 
-- **Boundary Refinement:**  
-  Use `--iterative-window-*` and `--penalty-weight` to improve alignment precision.
+### Shape Matching
+- **`--shape-mode`**: `step_vectors` is robust for general use, `heading` can help for curvature emphasis, `centered` is useful for centroid-stable tracks.
+- **`--target-spacing-m`** and **`--resample-max`** control resampling fidelity; reduce spacing for complex geometry.
+- **`--dtw-threshold`** governs strictness; lower values are stricter.
 
-- **Endpoint Anchoring:**  
-  Modify `--anchor-beta1` / `--anchor-beta2` for finer boundary corrections.
+### Crossing Disambiguation
+- **`--crossing-shape-weight`** increases how strongly shape decides which crossing to choose.
+- **`--crossing-shape-window-frac`** controls local shape context near the line; increase if a tight kink is near the finish.
 
-- **Candidate Inspection:**  
-  Use `--dump-candidates-gpx` to export all potential matches for visual verification in a GPX viewer.
+### Candidate Selection
+- **`--candidate-margin`** expands or tightens candidate distance windows.
+- **`--bbox-margin`** controls endpoint tolerance; tighter values reject more noise but can miss shifted tracks.
 
-- **Boundary Rejection:**  
-  Disable endpoint strictness with `--no-rejection` if you want to keep all detections.
+### Refinement
+- **`--endpoint-window-start/end`** and **`--endpoint-spatial-weight`** can tighten endpoint placement.
+- **`--iterative-window-start/end`** and **`--penalty-weight`** adjust the iterative search around boundaries.
+
+### Debugging
+- Use **`--dump-candidates-gpx`** and **`--export-gpx`** to visually inspect candidate windows, line crossings, and interpolation points.
 
 ---
 
@@ -181,4 +218,3 @@ GNU GPL v3
 ## Author
 
 Petr Holub
-
