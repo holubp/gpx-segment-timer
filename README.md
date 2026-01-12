@@ -11,6 +11,7 @@ The matcher uses a multi-stage pipeline that is translation-tolerant but spatial
 1) **Coarse candidate selection**
    - Finds recorded points near the reference start/end using endpoint and overall bounding boxes.
    - Generates candidate windows using cumulative distance with a `--candidate-margin` tolerance.
+   - Optional envelope/polylinedistance prefilters prune candidates that drift beyond GPS error bounds.
 
 2) **Shape matching (DTW)**
    - Compares candidate windows to the reference using DTW on translation-invariant shape sequences.
@@ -70,8 +71,17 @@ pip install gpxpy fastdtw openpyxl
 | Option | Description |
 |--------|-------------|
 | `--candidate-margin` | Relative distance tolerance for candidates (default `0.2`). |
+| `--start-end-margin-m` | Start/end bbox margin for candidate selection (meters); negative uses `--gps-error-m`. |
+| `--envelope-max-m` | Max distance from reference polyline for envelope prefilter; negative uses `--gps-error-m`. |
+| `--envelope-allow-off` | Allowed off-envelope samples per meters: `<points> <meters>` (default `2 100`). |
+| `--envelope-sample-max` | Max number of samples per candidate for envelope prefilter; `0` uses all points. |
+| `--prefilter-xtrack-p95-m` | Enable x-track p95 prefilter (meters); negative disables. |
+| `--prefilter-xtrack-samples` | Sample count for x-track p95 prefilter. |
 | `--allow-length-mismatch` | Allow candidates outside length window. |
 | `--dtw-threshold` | Max avg DTW cost (default `50`). |
+| `--dtw-penalty` | DTW penalty: `linear`, `quadratic`, `huber`. |
+| `--dtw-penalty-scale-m` | Scale for quadratic DTW penalty (meters). |
+| `--dtw-penalty-huber-k` | Huber k parameter for DTW penalty (meters). |
 | `--shape-mode` | `step_vectors`, `heading`, `centered`, or `auto`. |
 | `--gps-error-m` | GPS error estimate in meters (default `12`). |
 | `--target-spacing-m` | Target meters between resampled points (default `8`). |
@@ -193,6 +203,7 @@ pip install gpxpy fastdtw openpyxl
 - **`--shape-mode`**: `step_vectors` is robust for general use, `heading` can help for curvature emphasis, `centered` is useful for centroid-stable tracks.
 - **`--target-spacing-m`** and **`--resample-max`** control resampling fidelity; reduce spacing for complex geometry.
 - **`--dtw-threshold`** governs strictness; lower values are stricter.
+- **`--dtw-penalty`** can be set to `quadratic` or `huber` to penalize large deviations more aggressively.
 
 ### Crossing Disambiguation
 - **`--crossing-shape-weight`** increases how strongly shape decides which crossing to choose.
@@ -201,6 +212,9 @@ pip install gpxpy fastdtw openpyxl
 ### Candidate Selection
 - **`--candidate-margin`** expands or tightens candidate distance windows.
 - **`--bbox-margin`** controls endpoint tolerance; tighter values reject more noise but can miss shifted tracks.
+ - **`--start-end-margin-m`** tightens start/end candidate bboxes independent of endpoint rejection.
+ - **`--envelope-max-m`** and **`--envelope-allow-off-per-100m`** prune candidates that drift off the reference polyline.
+ - **`--prefilter-xtrack-p95-m`** adds an optional percentile-based cross-track gate.
 
 ### Refinement
 - **`--endpoint-window-start/end`** and **`--endpoint-spatial-weight`** can tighten endpoint placement.

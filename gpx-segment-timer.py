@@ -234,6 +234,26 @@ def compute_resample_count(points: List[Dict[str, Any]],
 def _vector_distance(a: Tuple[float, ...], b: Tuple[float, ...]) -> float:
     return math.sqrt(sum((ai - bi) ** 2 for ai, bi in zip(a, b)))
 
+_DTW_DISTANCE_FN = _vector_distance
+
+def make_dtw_distance(penalty: str,
+                      scale_m: float,
+                      huber_k: float) -> Any:
+    def dist(a: Tuple[float, ...], b: Tuple[float, ...]) -> float:
+        d = _vector_distance(a, b)
+        if penalty == "quadratic":
+            if scale_m <= 0:
+                return d * d
+            return (d * d) / scale_m
+        if penalty == "huber":
+            if huber_k <= 0:
+                return d
+            if d <= huber_k:
+                return d
+            return huber_k + ((d - huber_k) ** 2) / (2.0 * huber_k)
+        return d
+    return dist
+
 def _point_to_xy(lat: float, lon: float, origin: Tuple[float, float], lat_scale_ref: float) -> Tuple[float, float]:
     meters_per_deg = 111320.0
     dlat = lat - origin[0]
@@ -252,6 +272,27 @@ def _points_to_xy(points: List[Tuple[float, float]],
                   origin: Tuple[float, float],
                   lat_scale_ref: float) -> List[Tuple[float, float]]:
     return [_point_to_xy(lat, lon, origin, lat_scale_ref) for lat, lon in points]
+
+def point_to_polyline_distance_xy(px: float, py: float, poly_xy: List[Tuple[float, float]]) -> float:
+    if len(poly_xy) < 2:
+        return float("inf")
+    best = float("inf")
+    for i in range(len(poly_xy) - 1):
+        x1, y1 = poly_xy[i]
+        x2, y2 = poly_xy[i + 1]
+        dx = x2 - x1
+        dy = y2 - y1
+        if dx == 0 and dy == 0:
+            dist = math.hypot(px - x1, py - y1)
+        else:
+            t = ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)
+            t = max(0.0, min(1.0, t))
+            proj_x = x1 + t * dx
+            proj_y = y1 + t * dy
+            dist = math.hypot(px - proj_x, py - proj_y)
+        if dist < best:
+            best = dist
+    return best
 
 def build_shape_sequence(points_latlon: List[Tuple[float, float]],
                          shape_mode: str,
@@ -404,7 +445,7 @@ def refine_boundaries_using_warping_path(recorded_points: List[Dict[str, Any]],
     candidate_resampled = resample_points(candidate_segment, resample_count)
     ref_xy = build_centered_xy(ref_resampled, lat_scale_ref)
     cand_xy = build_centered_xy(candidate_resampled, lat_scale_ref)
-    _, path = fastdtw(cand_xy, ref_xy, dist=_vector_distance)
+    _, path = fastdtw(cand_xy, ref_xy, dist=_DTW_DISTANCE_FN)
     start_indices = [i for (i, j) in path if j == 0]
     end_indices = [i for (i, j) in path if j == len(ref_resampled) - 1]
     min_i = min(start_indices) if start_indices else 0
@@ -568,7 +609,7 @@ def refine_boundaries_with_endpoint_anchoring(recorded_points: List[Dict[str, An
     candidate_full = recorded_points[initial_start:initial_end]
     candidate_full_resampled = resample_points(candidate_full, resample_count)
     candidate_full_shape = build_shape_sequence(candidate_full_resampled, shape_mode, lat_scale_ref)
-    full_cost = fastdtw(candidate_full_shape, ref_shape, dist=_vector_distance)[0] / max(1, len(ref_shape))
+    full_cost = fastdtw(candidate_full_shape, ref_shape, dist=_DTW_DISTANCE_FN)[0] / max(1, len(ref_shape))
 
     L = max(3, int(0.1 * resample_count))
     ref_start_sub = resample_points(ref_points[0:L], L)
@@ -595,15 +636,15 @@ def refine_boundaries_with_endpoint_anchoring(recorded_points: List[Dict[str, An
                 continue
             candidate_resampled = resample_points(recorded_points[i:j], resample_count)
             candidate_shape = build_shape_sequence(candidate_resampled, shape_mode, lat_scale_ref)
-            full_cost_candidate = fastdtw(candidate_shape, ref_shape, dist=_vector_distance)[0] / max(1, len(ref_shape))
+            full_cost_candidate = fastdtw(candidate_shape, ref_shape, dist=_DTW_DISTANCE_FN)[0] / max(1, len(ref_shape))
             candidate_start_sub = resample_points(recorded_points[i:i+L], L) if len(recorded_points[i:i+L]) >= L else None
             candidate_end_sub = resample_points(recorded_points[j-L:j], L) if len(recorded_points[j-L:j]) >= L else None
             if candidate_start_sub is None or candidate_end_sub is None:
                 continue
             start_shape = build_shape_sequence(candidate_start_sub, shape_mode, lat_scale_ref)
             end_shape = build_shape_sequence(candidate_end_sub, shape_mode, lat_scale_ref)
-            start_cost = fastdtw(start_shape, ref_start_shape, dist=_vector_distance)[0] / max(1, len(ref_start_shape))
-            end_cost = fastdtw(end_shape, ref_end_shape, dist=_vector_distance)[0] / max(1, len(ref_end_shape))
+            start_cost = fastdtw(start_shape, ref_start_shape, dist=_DTW_DISTANCE_FN)[0] / max(1, len(ref_start_shape))
+            end_cost = fastdtw(end_shape, ref_end_shape, dist=_DTW_DISTANCE_FN)[0] / max(1, len(ref_end_shape))
             boundary_penalty = anchor_alpha * (
                 haversine_distance((recorded_points[i]['lat'], recorded_points[i]['lon']),
                                    (ref_points[0]['lat'], ref_points[0]['lon'])) +
@@ -628,6 +669,12 @@ def find_all_segment_matches(recorded_points: List[Dict[str, Any]],
                              bbox_margin_m: float = 30,
                              bbox_margin_overall_m: float | None = None,
                              gps_error_m: float = 12.0,
+                             start_end_margin_m: float = -1.0,
+                             envelope_max_m: float = -1.0,
+                             envelope_allow_off: Tuple[int, float] = (2, 100.0),
+                             envelope_sample_max: int = 200,
+                             prefilter_xtrack_p95_m: float = -1.0,
+                             prefilter_xtrack_samples: int = 80,
                              dump_pattern: Optional[str] = None,
                              ref_name: Optional[str] = None) -> List[Tuple[int, int, float, int, int]]:
     """
@@ -642,6 +689,10 @@ def find_all_segment_matches(recorded_points: List[Dict[str, Any]],
     ref_total_distance = compute_total_distance(ref_points)
     ref_resampled = resample_points(ref_points, resample_count)
     ref_shape = build_shape_sequence(ref_resampled, shape_mode, lat_scale_ref)
+    ref_origin = (ref_points[0]["lat"], ref_points[0]["lon"])
+    ref_poly_xy = _points_to_xy([(p["lat"], p["lon"]) for p in ref_points], ref_origin, lat_scale_ref)
+    envelope_max_m = gps_error_m if envelope_max_m < 0 else envelope_max_m
+    start_end_margin_m = gps_error_m if start_end_margin_m < 0 else start_end_margin_m
 
     # Build bboxes
     ref_bbox = compute_bounding_box(ref_points)
@@ -651,8 +702,8 @@ def find_all_segment_matches(recorded_points: List[Dict[str, Any]],
 
     ref_start = {'lat': ref_points[0]['lat'], 'lon': ref_points[0]['lon']}
     ref_end   = {'lat': ref_points[-1]['lat'], 'lon': ref_points[-1]['lon']}
-    bbox_start = expand_bounding_box((ref_start['lat'], ref_start['lat'], ref_start['lon'], ref_start['lon']), margin_m=bbox_margin_m)
-    bbox_end   = expand_bounding_box((ref_end['lat'],   ref_end['lat'],   ref_end['lon'],   ref_end['lon']),   margin_m=bbox_margin_m)
+    bbox_start = expand_bounding_box((ref_start['lat'], ref_start['lat'], ref_start['lon'], ref_start['lon']), margin_m=start_end_margin_m)
+    bbox_end   = expand_bounding_box((ref_end['lat'],   ref_end['lat'],   ref_end['lon'],   ref_end['lon']),   margin_m=start_end_margin_m)
 
     # Precompute cumulative distances and "outside overall bbox" prefix sum
     rec_cum_dists: List[float] = [0.0]
@@ -668,6 +719,18 @@ def find_all_segment_matches(recorded_points: List[Dict[str, Any]],
     pref_out = [0] * (len(recorded_points) + 1)
     for i, v in enumerate(outside, start=1):
         pref_out[i] = pref_out[i-1] + v
+
+    # Precompute distances to reference polyline once per segment.
+    dist_all: List[float] = []
+    pref_off_all: List[int] = [0] * (len(recorded_points) + 1)
+    if envelope_max_m > 0 or prefilter_xtrack_p95_m > 0:
+        off_all: List[int] = []
+        for i, pt in enumerate(recorded_points):
+            px, py = _point_to_xy(pt["lat"], pt["lon"], ref_origin, lat_scale_ref)
+            dist = point_to_polyline_distance_xy(px, py, ref_poly_xy)
+            dist_all.append(dist)
+            off_all.append(1 if envelope_max_m > 0 and dist > envelope_max_m else 0)
+            pref_off_all[i + 1] = pref_off_all[i] + off_all[-1]
 
     # Phase 1: enumerate candidate (s,e) pairs
     n = len(recorded_points)
@@ -722,6 +785,37 @@ def find_all_segment_matches(recorded_points: List[Dict[str, Any]],
                     continue
                 if e <= s:
                     continue
+                if envelope_max_m > 0 or prefilter_xtrack_p95_m > 0:
+                    edge_guard = max(1, int(0.05 * (e - s)))
+                    inner_s = s + edge_guard
+                    inner_e = e - edge_guard
+                    if inner_e > inner_s:
+                        inner_len_m = rec_cum_dists[inner_e] - rec_cum_dists[inner_s]
+                        if envelope_max_m > 0:
+                            allow_pts, allow_m = envelope_allow_off
+                            allow_m = max(1.0, allow_m)
+                            allowed_off = int(math.ceil(allow_pts * (inner_len_m / allow_m)))
+                            if envelope_sample_max > 0 and (inner_e - inner_s + 1) > envelope_sample_max:
+                                step = max(1, (inner_e - inner_s + 1) // envelope_sample_max)
+                                off_count = 0
+                                for idx in range(inner_s, inner_e + 1, step):
+                                    if dist_all[idx] > envelope_max_m:
+                                        off_count += 1
+                                if off_count > allowed_off:
+                                    continue
+                            else:
+                                off_count = pref_off_all[inner_e + 1] - pref_off_all[inner_s]
+                                if off_count > allowed_off:
+                                    continue
+                        if prefilter_xtrack_p95_m > 0 and dist_all:
+                            sample_len = max(1, prefilter_xtrack_samples)
+                            step = max(1, (inner_e - inner_s + 1) // sample_len)
+                            sampled = dist_all[inner_s:inner_e + 1:step]
+                            sampled.sort()
+                            p95_idx = int(math.ceil(0.95 * len(sampled))) - 1
+                            p95 = sampled[max(0, min(p95_idx, len(sampled) - 1))]
+                            if p95 > prefilter_xtrack_p95_m:
+                                continue
                 candidates.append((s, e))
                 run_cands.append((s, e))
                 accepted_in_run += 1
@@ -769,7 +863,7 @@ def find_all_segment_matches(recorded_points: List[Dict[str, Any]],
                 continue
             cand_resampled = resample_points(cand_pts, resample_count)
             cand_shape = build_shape_sequence(cand_resampled, shape_mode, lat_scale_ref)
-            dtw_distance, _ = fastdtw(cand_shape, ref_shape, dist=_vector_distance)
+            dtw_distance, _ = fastdtw(cand_shape, ref_shape, dist=_DTW_DISTANCE_FN)
             denom = max(1, len(ref_shape))
             avg_cost = dtw_distance / denom
             logging.debug("DTW for run=%d s=%d e=%d: total %f, avg %f.", run_idx, s, e, dtw_distance, avg_cost)
@@ -1014,10 +1108,29 @@ def main() -> None:
                         help="Output file path (required for CSV and XLSX outputs).")
     parser.add_argument("--candidate-margin", type=float, default=0.2,
                         help="Allowed variation (fraction) in candidate segment distance relative to reference.")
+    parser.add_argument("--start-end-margin-m", type=float, default=-1.0,
+                        help="Start/end bbox margin in meters for candidate selection; negative uses --gps-error-m.")
+    parser.add_argument("--envelope-max-m", type=float, default=-1.0,
+                        help="Max distance from reference polyline for envelope prefilter; negative uses --gps-error-m.")
+    parser.add_argument("--envelope-allow-off", nargs=2, type=float, metavar=("POINTS", "METERS"),
+                        default=(2, 100.0),
+                        help="Allowed off-envelope samples per meters: <points> <meters>.")
+    parser.add_argument("--envelope-sample-max", type=int, default=0,
+                        help="Max number of samples per candidate for envelope prefilter; 0 uses all points.")
+    parser.add_argument("--prefilter-xtrack-p95-m", type=float, default=-1.0,
+                        help="Enable x-track p95 prefilter (meters); negative disables.")
+    parser.add_argument("--prefilter-xtrack-samples", type=int, default=80,
+                        help="Number of samples for x-track p95 prefilter.")
     parser.add_argument("--allow-length-mismatch", action="store_true",
                         help="Allow final detected segment length to differ from reference beyond candidate-margin without rejecting the match.")
     parser.add_argument("--dtw-threshold", type=float, default=50,
                         help="Maximum allowed average DTW distance (m per resampled point) for a match.")
+    parser.add_argument("--dtw-penalty", choices=["linear", "quadratic", "huber"], default="linear",
+                        help="Penalty function for DTW point distances.")
+    parser.add_argument("--dtw-penalty-scale-m", type=float, default=10.0,
+                        help="Scale for quadratic DTW penalty (meters).")
+    parser.add_argument("--dtw-penalty-huber-k", type=float, default=5.0,
+                        help="Huber k parameter for DTW penalty (meters).")
     parser.add_argument("--shape-mode", choices=["step_vectors", "heading", "centered", "auto"], default="step_vectors",
                         help="Shape representation used for DTW matching.")
     parser.add_argument("--gps-error-m", type=float, default=12.0,
@@ -1100,6 +1213,13 @@ def main() -> None:
         log_level = logging.DEBUG
     logging.basicConfig(level=log_level, format="%(asctime)s [%(levelname)s] %(message)s")
 
+    global _DTW_DISTANCE_FN
+    _DTW_DISTANCE_FN = make_dtw_distance(
+        args.dtw_penalty,
+        args.dtw_penalty_scale_m,
+        args.dtw_penalty_huber_k,
+    )
+
     if args.output_mode in ["csv", "xlsx"] and not args.output_file:
         parser.error("Output file must be provided for CSV or XLSX outputs.")
 
@@ -1155,6 +1275,12 @@ def main() -> None:
             bbox_margin_m=args.bbox_margin,
             bbox_margin_overall_m=(args.bbox_margin_overall if hasattr(args, 'bbox_margin_overall') else None),
             gps_error_m=args.gps_error_m,
+            start_end_margin_m=args.start_end_margin_m,
+            envelope_max_m=args.envelope_max_m,
+            envelope_allow_off=(int(args.envelope_allow_off[0]), float(args.envelope_allow_off[1])),
+            envelope_sample_max=args.envelope_sample_max,
+            prefilter_xtrack_p95_m=args.prefilter_xtrack_p95_m,
+            prefilter_xtrack_samples=args.prefilter_xtrack_samples,
             dump_pattern=args.dump_candidates_gpx,
             ref_name=seg_filename
         )
@@ -1245,7 +1371,7 @@ def main() -> None:
                     cand_shape = build_shape_sequence(candidate, shape_mode, lat_scale_ref)
                     if not cand_shape or not ref_shape:
                         return float("inf")
-                    dtw_distance, _ = fastdtw(cand_shape, ref_shape, dist=_vector_distance)
+                    dtw_distance, _ = fastdtw(cand_shape, ref_shape, dist=_DTW_DISTANCE_FN)
                     return dtw_distance / max(1, len(ref_shape))
                 def pair_shape_cost(start_crossing: Dict[str, Any], end_crossing: Dict[str, Any]) -> float:
                     s_idx = start_crossing.get("idx1")
@@ -1267,7 +1393,7 @@ def main() -> None:
                     if not cand_shape or not ref_pair_shape:
                         pair_shape_cache[key] = float("inf")
                         return pair_shape_cache[key]
-                    dtw_distance, _ = fastdtw(cand_shape, ref_pair_shape, dist=_vector_distance)
+                    dtw_distance, _ = fastdtw(cand_shape, ref_pair_shape, dist=_DTW_DISTANCE_FN)
                     pair_shape_cache[key] = dtw_distance / max(1, len(ref_pair_shape))
                     return pair_shape_cache[key]
                 if len(ref_points) >= 2:
