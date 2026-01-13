@@ -340,6 +340,32 @@ def compute_line_normal(p0: Tuple[float, float],
         return (1.0, 0.0), lat_scale_ref
     return (nx / norm, ny / norm), lat_scale_ref
 
+def compute_median_time_step(points: List[Dict[str, Any]]) -> Optional[float]:
+    deltas: List[float] = []
+    prev_time = None
+    for pt in points:
+        t = pt.get("time")
+        if t is None:
+            prev_time = None
+            continue
+        if prev_time is not None:
+            delta = (t - prev_time).total_seconds()
+            if delta > 0:
+                deltas.append(delta)
+        prev_time = t
+    if not deltas:
+        return None
+    deltas.sort()
+    mid = len(deltas) // 2
+    if len(deltas) % 2 == 1:
+        return deltas[mid]
+    return (deltas[mid - 1] + deltas[mid]) / 2.0
+
+def log_config(args: argparse.Namespace, label: str) -> None:
+    logging.info("%s config:", label)
+    for key in sorted(vars(args).keys()):
+        logging.info("  %s=%s", key, getattr(args, key))
+
 def find_line_crossing(recorded_points: List[Dict[str, Any]],
                        line_anchor: Tuple[float, float],
                        line_normal: Tuple[float, float],
@@ -416,6 +442,87 @@ def compute_bounding_box(points: List[Dict[str, Any]]) -> Tuple[float, float, fl
     lats = [p['lat'] for p in points]
     lons = [p['lon'] for p in points]
     return (min(lats), max(lats), min(lons), max(lons))
+
+def compute_rhomboid_extents(points: List[Dict[str, Any]],
+                             lat_scale_ref: float,
+                             margin_m: float = 0.0) -> Optional[Tuple[float, float, float, float]]:
+    """
+    Compute diamond (rhomboid) extents using x+y and x-y slabs.
+    Returns (minsum, maxsum, mindiff, maxdiff) in meters.
+    """
+    if not points:
+        return None
+    meters_per_deg = 111320.0
+    cos_lat = math.cos(math.radians(lat_scale_ref))
+    minsum = mindiff = float("inf")
+    maxsum = maxdiff = float("-inf")
+    for pt in points:
+        x = pt["lon"] * cos_lat * meters_per_deg
+        y = pt["lat"] * meters_per_deg
+        s = x + y
+        d = x - y
+        minsum = min(minsum, s)
+        maxsum = max(maxsum, s)
+        mindiff = min(mindiff, d)
+        maxdiff = max(maxdiff, d)
+    if margin_m > 0:
+        minsum -= margin_m
+        maxsum += margin_m
+        mindiff -= margin_m
+        maxdiff += margin_m
+    return (minsum, maxsum, mindiff, maxdiff)
+
+def rhomboid_extents_overlap(a: Tuple[float, float, float, float],
+                             b: Tuple[float, float, float, float]) -> bool:
+    return not (a[1] < b[0] or a[0] > b[1] or a[3] < b[2] or a[2] > b[3])
+
+def compute_octagon_extents(points: List[Dict[str, Any]],
+                            lat_scale_ref: float,
+                            margin_m: float = 0.0) -> Optional[Tuple[float, float, float, float, float, float, float, float]]:
+    """
+    Compute coarse octagon extents using x/y, x+y, x-y slabs.
+    Returns (minx, maxx, miny, maxy, minsum, maxsum, mindiff, maxdiff).
+    """
+    if not points:
+        return None
+    meters_per_deg = 111320.0
+    cos_lat = math.cos(math.radians(lat_scale_ref))
+    minx = miny = float("inf")
+    maxx = maxy = float("-inf")
+    minsum = mindiff = float("inf")
+    maxsum = maxdiff = float("-inf")
+    for pt in points:
+        x = pt["lon"] * cos_lat * meters_per_deg
+        y = pt["lat"] * meters_per_deg
+        minx = min(minx, x)
+        maxx = max(maxx, x)
+        miny = min(miny, y)
+        maxy = max(maxy, y)
+        s = x + y
+        d = x - y
+        minsum = min(minsum, s)
+        maxsum = max(maxsum, s)
+        mindiff = min(mindiff, d)
+        maxdiff = max(maxdiff, d)
+    if margin_m > 0:
+        minx -= margin_m
+        maxx += margin_m
+        miny -= margin_m
+        maxy += margin_m
+        minsum -= margin_m
+        maxsum += margin_m
+        mindiff -= margin_m
+        maxdiff += margin_m
+    return (minx, maxx, miny, maxy, minsum, maxsum, mindiff, maxdiff)
+
+def octagon_extents_overlap(a: Tuple[float, float, float, float, float, float, float, float],
+                            b: Tuple[float, float, float, float, float, float, float, float]) -> bool:
+    return not (
+        a[1] < b[0] or a[0] > b[1] or
+        a[3] < b[2] or a[2] > b[3] or
+        a[5] < b[4] or a[4] > b[5] or
+        a[7] < b[6] or a[6] > b[7]
+    )
 
 def expand_bounding_box(bbox: Tuple[float, float, float, float], margin_m: float = 30) -> Tuple[float, float, float, float]:
     """Expand a bounding box by margin_m meters."""
@@ -689,6 +796,13 @@ def find_all_segment_matches(recorded_points: List[Dict[str, Any]],
     ref_total_distance = compute_total_distance(ref_points)
     ref_resampled = resample_points(ref_points, resample_count)
     ref_shape = build_shape_sequence(ref_resampled, shape_mode, lat_scale_ref)
+    rh_margin = max(0.0, gps_error_m)
+    ref_rhom = compute_rhomboid_extents(ref_points, lat_scale_ref, margin_m=rh_margin)
+    rec_rhom = compute_rhomboid_extents(recorded_points, lat_scale_ref, margin_m=rh_margin)
+    if ref_rhom and rec_rhom and not rhomboid_extents_overlap(ref_rhom, rec_rhom):
+        if logging.getLogger().isEnabledFor(logging.INFO):
+            logging.info("Skipping reference %s: no overlap with recorded track rhomboid bounds.", ref_name or "<ref>")
+        return []
     ref_origin = (ref_points[0]["lat"], ref_points[0]["lon"])
     ref_poly_xy = _points_to_xy([(p["lat"], p["lon"]) for p in ref_points], ref_origin, lat_scale_ref)
     envelope_max_m = gps_error_m if envelope_max_m < 0 else envelope_max_m
@@ -1004,17 +1118,25 @@ def output_results(results: List[Dict[str, Any]],
       - "Ref Dist (m)": total distance of the reference segment.
       - "Detected Dist (m)": total distance of the detected segment.
     """
-    header = ["Segment", "Start Idx", "End Idx", "Ref Dist (m)", "Detected Dist (m)",
+    header = ["Segment", "Start Idx", "End Idx", "Start Cross 0", "Start Cross 1",
+              "End Cross 0", "End Cross 1", "Start Interp", "End Interp",
+              "Ref Dist (m)", "Detected Dist (m)",
               "DTW Avg (m)", "Time (s)", "Time (H:M:S)",
               "Ref Start", "Ref End", "Start Diff (m)", "End Diff (m)"]
     if output_mode == "stdout":
-        print("{:<25} {:>10} {:>10} {:>15} {:>20} {:>15} {:>12} {:>15} {:>25} {:>25} {:>18} {:>15}".format(*header))
-        print("-" * 200)
+        print("{:<25} {:>10} {:>10} {:>12} {:>12} {:>12} {:>12} {:>12} {:>10} {:>15} {:>20} {:>15} {:>12} {:>15} {:>25} {:>25} {:>18} {:>15}".format(*header))
+        print("-" * 240)
         for res in results:
-            print("{:<25} {:>10} {:>10} {:>15.2f} {:>20.2f} {:>15.2f} {:>12.2f} {:>15} {:>25} {:>25} {:>18.2f} {:>15.2f}".format(
+            print("{:<25} {:>10} {:>10} {:>12} {:>12} {:>12} {:>12} {:>12} {:>10} {:>15.2f} {:>20.2f} {:>15.2f} {:>12.2f} {:>15} {:>25} {:>25} {:>18.2f} {:>15.2f}".format(
                 res["segment"],
                 res["start_index"],
                 res["end_index"],
+                res["start_cross_idx0"] if res["start_cross_idx0"] is not None else -1,
+                res["start_cross_idx1"] if res["start_cross_idx1"] is not None else -1,
+                res["end_cross_idx0"] if res["end_cross_idx0"] is not None else -1,
+                res["end_cross_idx1"] if res["end_cross_idx1"] is not None else -1,
+                "Y" if res["start_cross_interp"] else "N",
+                "Y" if res["end_cross_interp"] else "N",
                 res["ref_distance"],
                 res["detected_distance"],
                 res["dtw_avg"],
@@ -1036,6 +1158,12 @@ def output_results(results: List[Dict[str, Any]],
                     res["segment"],
                     res["start_index"],
                     res["end_index"],
+                    res["start_cross_idx0"] if res["start_cross_idx0"] is not None else "",
+                    res["start_cross_idx1"] if res["start_cross_idx1"] is not None else "",
+                    res["end_cross_idx0"] if res["end_cross_idx0"] is not None else "",
+                    res["end_cross_idx1"] if res["end_cross_idx1"] is not None else "",
+                    "Y" if res["start_cross_interp"] else "N",
+                    "Y" if res["end_cross_interp"] else "N",
                     f"{res['ref_distance']:.2f}",
                     f"{res['detected_distance']:.2f}",
                     f"{res['dtw_avg']:.2f}",
@@ -1061,6 +1189,12 @@ def output_results(results: List[Dict[str, Any]],
                 res["segment"],
                 res["start_index"],
                 res["end_index"],
+                res["start_cross_idx0"] if res["start_cross_idx0"] is not None else None,
+                res["start_cross_idx1"] if res["start_cross_idx1"] is not None else None,
+                res["end_cross_idx0"] if res["end_cross_idx0"] is not None else None,
+                res["end_cross_idx1"] if res["end_cross_idx1"] is not None else None,
+                "Y" if res["start_cross_interp"] else "N",
+                "Y" if res["end_cross_interp"] else "N",
                 float(f"{res['ref_distance']:.2f}"),
                 float(f"{res['detected_distance']:.2f}"),
                 float(f"{res['dtw_avg']:.2f}"),
@@ -1181,6 +1315,8 @@ def main() -> None:
                         help="Weight for length error when selecting crossing pairs; negative enables auto-tuning.")
     parser.add_argument("--crossing-window-max", type=int, default=200,
                         help="Max number of points to extend around candidate window when selecting crossings.")
+    parser.add_argument("--crossing-edge-window-s", type=float, default=1.0,
+                        help="Edge window in seconds for start/end line crossing search (converted using median sampling rate).")
     parser.add_argument("--endpoint-window-start", type=int, default=1000,
                         help="Local sliding window (in points) for refining the start boundary.")
     parser.add_argument("--endpoint-window-end", type=int, default=1000,
@@ -1202,6 +1338,8 @@ def main() -> None:
                         help="Output GPX file for exporting matched segments.")
     parser.add_argument("--dump-candidates-gpx", default=None,
                         help="If set, dumps per start-bbox run the candidate segments (after bbox filters) into GPX files. Use placeholders {ref}, {run}, {rs}, {re}, {n}.")
+    parser.add_argument("--group-by-segment", action="store_true",
+                        help="Group output by segment name; otherwise results are sorted by start index.")
     args = parser.parse_args()
     if getattr(args, 'skip_endpoint_checks', False):
         args.no_rejection = True
@@ -1223,6 +1361,8 @@ def main() -> None:
     if args.output_mode in ["csv", "xlsx"] and not args.output_file:
         parser.error("Output file must be provided for CSV or XLSX outputs.")
 
+    if args.verbose:
+        log_config(args, "Initial")
     logging.info("Loading recorded track: %s", args.recorded)
     log_gpx_input_stats(args.recorded, "Recorded")
     recorded_points = load_gpx_points(args.recorded)
@@ -1242,6 +1382,13 @@ def main() -> None:
         d = haversine_distance((recorded_points[i-1]['lat'], recorded_points[i-1]['lon']),
                                (recorded_points[i]['lat'], recorded_points[i]['lon']))
         rec_cum_dists.append(rec_cum_dists[-1] + d)
+    median_dt = compute_median_time_step(recorded_points)
+    if median_dt is not None:
+        logging.info("Recorded GPX median sampling interval: %.3f s", median_dt)
+    if args.verbose:
+        adjusted = argparse.Namespace(**vars(args))
+        adjusted.median_sampling_s = median_dt
+        log_config(adjusted, "Post-load")
 
     results: List[Dict[str, Any]] = []
     for seg_filename, ref_points in ref_segments.items():
@@ -1300,6 +1447,23 @@ def main() -> None:
         ref_end_shape_cross = build_shape_sequence(ref_end_sub_cross, shape_mode, lat_scale_ref)
 
         accepted_windows: List[Tuple[int, int]] = []
+        crossing_edge_window_pts: Optional[int] = None
+        if median_dt is not None and args.crossing_edge_window_s > 0:
+            crossing_edge_window_pts = max(1, int(round(args.crossing_edge_window_s / median_dt)))
+        crossing_edge_window_pts: Optional[int] = None
+        if median_dt is not None and args.crossing_edge_window_s > 0:
+            crossing_edge_window_pts = max(1, int(round(args.crossing_edge_window_s / median_dt)))
+        if args.verbose:
+            seg_cfg = argparse.Namespace(
+                ref_segment=seg_filename,
+                resample_count=resample_count,
+                crossing_L=crossing_L,
+                crossing_edge_window_pts=crossing_edge_window_pts,
+                line_length_m=args.line_length_m,
+                bbox_margin=args.bbox_margin,
+                candidate_margin=args.candidate_margin,
+            )
+            log_config(seg_cfg, "Segment")
         for (start_idx, end_idx, dtw_avg, orig_start, orig_end) in matches:
             if args.no_refinement:
                 logging.info("Skipping refinement", orig_start, orig_end)
@@ -1324,21 +1488,23 @@ def main() -> None:
                 # Fallback if refinement breaks monotonicity/length
                 used_fallback = False
                 if final_end <= final_start:
-                    logging.warning("Refinement produced end<=start; falling back to original candidate [%d,%d).", orig_start, orig_end)
+                    logging.warning("Refinement produced end<=start for '%s'; falling back to original candidate [%d,%d).", seg_filename, orig_start, orig_end)
                     final_start, final_end = orig_start, orig_end
                     used_fallback = True
 
             detected_distance = rec_cum_dists[final_end] - rec_cum_dists[final_start]
             if detected_distance <= 0 and not used_fallback:
-                logging.warning("Refinement produced non-positive length; falling back to original candidate [%d,%d).", orig_start, orig_end)
+                logging.warning("Refinement produced non-positive length for '%s'; falling back to original candidate [%d,%d).", seg_filename, orig_start, orig_end)
                 final_start, final_end = orig_start, orig_end
                 detected_distance = rec_cum_dists[final_end] - rec_cum_dists[final_start]
                 used_fallback = True
             if final_end <= final_start:
                 logging.warning("Rejected match for '%s': end index (%d) <= start index (%d).", seg_filename, final_end, final_start)
+                logging.info("Rejected DTW winner for '%s' at [%d,%d): end<=start.", seg_filename, final_start, final_end)
                 continue
             if detected_distance <= 0:
                 logging.warning("Rejected match for '%s': non-positive detected distance %.2f m.", seg_filename, detected_distance)
+                logging.info("Rejected DTW winner for '%s' at [%d,%d): non-positive length.", seg_filename, final_start, final_end)
                 continue
             def compute_crossings_and_diffs(start_idx: int, end_idx: int) -> Tuple[Tuple[float, float], Tuple[float, float], float, float, Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
                 start_cross = None
@@ -1399,17 +1565,23 @@ def main() -> None:
                 if len(ref_points) >= 2:
                     start_normal, start_lat_scale = compute_line_normal(ref_start_coords, (ref_points[1]['lat'], ref_points[1]['lon']))
                     end_normal, end_lat_scale = compute_line_normal(ref_end_coords, (ref_points[-2]['lat'], ref_points[-2]['lon']))
-                    start_cross = find_line_crossing(
-                        recorded_points, ref_start_coords, start_normal, start_idx, end_idx, start_lat_scale, False, line_half_len)
-                    end_cross = find_line_crossing(
-                        recorded_points, ref_end_coords, end_normal, start_idx, end_idx, end_lat_scale, True, line_half_len)
-                    edge_window = min(args.crossing_window_max, max(30, int(0.1 * resample_count)))
+                    if crossing_edge_window_pts is not None:
+                        edge_window = crossing_edge_window_pts
+                    else:
+                        edge_window = max(30, int(0.1 * resample_count))
+                    edge_window = min(args.crossing_window_max, edge_window)
                     s_lo = max(0, start_idx - edge_window)
-                    s_hi = min(len(recorded_points) - 1, end_idx + edge_window)
+                    s_hi = min(len(recorded_points) - 1, start_idx + edge_window)
+                    e_lo = max(0, end_idx - edge_window)
+                    e_hi = min(len(recorded_points) - 1, end_idx + edge_window)
+                    start_cross = find_line_crossing(
+                        recorded_points, ref_start_coords, start_normal, s_lo, s_hi, start_lat_scale, False, line_half_len)
+                    end_cross = find_line_crossing(
+                        recorded_points, ref_end_coords, end_normal, e_lo, e_hi, end_lat_scale, True, line_half_len)
                     start_crossings = find_line_crossings(
                         recorded_points, ref_start_coords, start_normal, s_lo, s_hi, start_lat_scale, line_half_len)
                     end_crossings = find_line_crossings(
-                        recorded_points, ref_end_coords, end_normal, s_lo, s_hi, end_lat_scale, line_half_len)
+                        recorded_points, ref_end_coords, end_normal, e_lo, e_hi, end_lat_scale, line_half_len)
 
                     def end_crossings_for_start(s_idx: int) -> List[Dict[str, Any]]:
                         extra = max(args.gps_error_m * 4.0, ref_distance * 0.02)
@@ -1499,37 +1671,41 @@ def main() -> None:
                             # If endpoint proximity still exceeds threshold, try snapping to best end/start crossing.
                             s_idx = start_cross["idx1"]
                             e_idx = end_cross["idx0"]
-                            s_diff = haversine_distance((start_cross["lat"], start_cross["lon"]), ref_start_coords)
-                            e_diff = haversine_distance((end_cross["lat"], end_cross["lon"]), ref_end_coords)
-                            if e_diff > args.bbox_margin:
-                                best_end = None
-                                for ec in end_crossings:
-                                    e_idx = ec["idx0"]
-                                    if e_idx <= s_idx:
-                                        continue
-                                    seg_len = rec_cum_dists[e_idx] - rec_cum_dists[s_idx]
-                                    length_err = abs(seg_len - ref_distance)
-                                    e_diff = haversine_distance((ec["lat"], ec["lon"]), ref_end_coords)
-                                    score = endpoint_weight * e_diff + length_weight * length_err
-                                    if best_end is None or score < best_end[0]:
-                                        best_end = (score, ec)
-                                if best_end is not None:
-                                    end_cross = best_end[1]
-                            if s_diff > args.bbox_margin:
-                                best_start = None
-                                e_idx = end_cross["idx0"]
-                                for sc in start_crossings:
-                                    s_idx = sc["idx1"]
-                                    if e_idx <= s_idx:
-                                        continue
-                                    seg_len = rec_cum_dists[e_idx] - rec_cum_dists[s_idx]
-                                    length_err = abs(seg_len - ref_distance)
-                                    s_diff = haversine_distance((sc["lat"], sc["lon"]), ref_start_coords)
-                                    score = endpoint_weight * s_diff + length_weight * length_err
-                                    if best_start is None or score < best_start[0]:
-                                        best_start = (score, sc)
-                                if best_start is not None:
-                                    start_cross = best_start[1]
+                            if e_idx <= s_idx:
+                                start_cross = None
+                                end_cross = None
+                            if start_cross and end_cross:
+                                s_diff = haversine_distance((start_cross["lat"], start_cross["lon"]), ref_start_coords)
+                                e_diff = haversine_distance((end_cross["lat"], end_cross["lon"]), ref_end_coords)
+                                if e_diff > args.bbox_margin:
+                                    best_end = None
+                                    for ec in end_crossings:
+                                        e_idx = ec["idx0"]
+                                        if e_idx <= s_idx:
+                                            continue
+                                        seg_len = rec_cum_dists[e_idx] - rec_cum_dists[s_idx]
+                                        length_err = abs(seg_len - ref_distance)
+                                        e_diff = haversine_distance((ec["lat"], ec["lon"]), ref_end_coords)
+                                        score = endpoint_weight * e_diff + length_weight * length_err
+                                        if best_end is None or score < best_end[0]:
+                                            best_end = (score, ec)
+                                    if best_end is not None:
+                                        end_cross = best_end[1]
+                                if s_diff > args.bbox_margin:
+                                    best_start = None
+                                    e_idx = end_cross["idx0"]
+                                    for sc in start_crossings:
+                                        s_idx = sc["idx1"]
+                                        if e_idx <= s_idx:
+                                            continue
+                                        seg_len = rec_cum_dists[e_idx] - rec_cum_dists[s_idx]
+                                        length_err = abs(seg_len - ref_distance)
+                                        s_diff = haversine_distance((sc["lat"], sc["lon"]), ref_start_coords)
+                                        score = endpoint_weight * s_diff + length_weight * length_err
+                                        if best_start is None or score < best_start[0]:
+                                            best_start = (score, sc)
+                                    if best_start is not None:
+                                        start_cross = best_start[1]
                     # If still out of bounds, prioritize endpoint proximity over length.
                     if start_cross and end_cross:
                         s_diff = haversine_distance((start_cross["lat"], start_cross["lon"]), ref_start_coords)
@@ -1608,6 +1784,8 @@ def main() -> None:
                     if not (min_ratio <= length_ratio <= max_ratio) and (start_diff > args.bbox_margin or end_diff > args.bbox_margin):
                         logging.warning("Rejected match for '%s': length ratio %.3f outside [%.3f, %.3f] (detected %.2f m vs ref %.2f m).",
                                         seg_filename, length_ratio, min_ratio, max_ratio, detected_distance, ref_distance)
+                        logging.info("Rejected DTW winner for '%s' at [%d,%d): length ratio %.3f outside [%.3f, %.3f].",
+                                     seg_filename, final_start, final_end, length_ratio, min_ratio, max_ratio)
                         continue
             logging.info("Detected start for '%s' is %.2f m from ref start (limit: %.2f m).",
                          seg_filename, start_diff, args.bbox_margin)
@@ -1615,6 +1793,32 @@ def main() -> None:
                          seg_filename, end_diff, args.bbox_margin)
             logging.info("Detected segment length for '%s' is %.2f m; Reference segment length is %.2f m.",
                          seg_filename, detected_distance, ref_distance)
+            start_time = recorded_points[final_start].get("time")
+            end_time = recorded_points[final_end - 1].get("time")
+            if start_time and end_time:
+                raw_delta = (end_time - start_time).total_seconds()
+                logging.info("Segment timestamps for '%s': start_idx=%d time=%s end_idx=%d time=%s raw_delta=%.2f",
+                             seg_filename, final_start, start_time, final_end - 1, end_time, raw_delta)
+            if start_crossing and end_crossing and start_crossing.get("time") and end_crossing.get("time"):
+                crossing_delta = (end_crossing["time"] - start_crossing["time"]).total_seconds()
+                logging.info("Crossing timestamps for '%s': start=%s end=%s delta=%.2f",
+                             seg_filename, start_crossing["time"], end_crossing["time"], crossing_delta)
+            if start_crossing and start_crossing.get("interp"):
+                s_idx0 = start_crossing.get("idx0")
+                s_idx1 = start_crossing.get("idx1")
+                if s_idx0 is not None and s_idx1 is not None:
+                    s_t0 = recorded_points[s_idx0].get("time")
+                    s_t1 = recorded_points[s_idx1].get("time")
+                    logging.info("Start interpolation for '%s': idx0=%d time0=%s idx1=%d time1=%s interp_time=%s",
+                                 seg_filename, s_idx0, s_t0, s_idx1, s_t1, start_crossing.get("time"))
+            if end_crossing and end_crossing.get("interp"):
+                e_idx0 = end_crossing.get("idx0")
+                e_idx1 = end_crossing.get("idx1")
+                if e_idx0 is not None and e_idx1 is not None:
+                    e_t0 = recorded_points[e_idx0].get("time")
+                    e_t1 = recorded_points[e_idx1].get("time")
+                    logging.info("Finish interpolation for '%s': idx0=%d time0=%s idx1=%d time1=%s interp_time=%s",
+                                 seg_filename, e_idx0, e_t0, e_idx1, e_t1, end_crossing.get("time"))
             if (start_diff > args.bbox_margin or end_diff > args.bbox_margin) and not args.no_rejection:
                 if not used_fallback:
                     logging.warning("Refined boundaries deviate; falling back to original candidate [%d,%d).", orig_start, orig_end)
@@ -1630,9 +1834,13 @@ def main() -> None:
                         if not ok:
                             logging.warning("Rejected match for '%s' by single-passage check (radius=%.1f m, edge_frac=%.2f).",
                                             seg_filename, args.passage_radius, args.passage_edge_frac)
+                            logging.info("Rejected DTW winner for '%s' at [%d,%d): single-passage check failed.",
+                                         seg_filename, final_start, final_end)
                             continue
                     logging.warning("Detected boundaries for '%s' deviate: start_diff=%.2f m, end_diff=%.2f m (limit: %.2f m).",
                                     seg_filename, start_diff, end_diff, args.bbox_margin)
+                    logging.info("Rejected DTW winner for '%s' at [%d,%d): endpoint deviation.",
+                                 seg_filename, final_start, final_end)
                     continue
             time_seconds = None
             if start_crossing and end_crossing and start_crossing.get("time") and end_crossing.get("time"):
@@ -1647,6 +1855,8 @@ def main() -> None:
                 denom = min(prev_e - prev_s, final_end - final_start)
                 if denom > 0 and overlap / denom > 0.9:
                     logging.info("Skipping near-duplicate match for '%s' at [%d,%d].", seg_filename, final_start, final_end)
+                    logging.info("Rejected DTW winner for '%s' at [%d,%d): near-duplicate overlap.",
+                                 seg_filename, final_start, final_end)
                     break
             else:
                 accepted_windows.append((final_start, final_end))
@@ -1654,6 +1864,12 @@ def main() -> None:
                     "segment": seg_filename,
                     "start_index": final_start,
                     "end_index": final_end,
+                    "start_cross_idx0": start_crossing.get("idx0") if start_crossing else None,
+                    "start_cross_idx1": start_crossing.get("idx1") if start_crossing else None,
+                    "end_cross_idx0": end_crossing.get("idx0") if end_crossing else None,
+                    "end_cross_idx1": end_crossing.get("idx1") if end_crossing else None,
+                    "start_cross_interp": bool(start_crossing.get("interp")) if start_crossing else False,
+                    "end_cross_interp": bool(end_crossing.get("interp")) if end_crossing else False,
                     "ref_distance": ref_distance,
                     "detected_distance": detected_distance,
                     "dtw_avg": dtw_avg,
@@ -1684,6 +1900,10 @@ def main() -> None:
                         args.line_length_m,
                     )
     if results:
+        if args.group_by_segment:
+            results.sort(key=lambda r: (r["segment"], r["start_index"]))
+        else:
+            results.sort(key=lambda r: r["start_index"])
         output_results(results, args.output_mode, args.output_file)
     else:
         logging.info("No matching segments detected in the recorded track.")

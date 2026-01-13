@@ -65,6 +65,7 @@ pip install gpxpy fastdtw openpyxl
 | `--export-gpx` | Export matched segments as GPX. |
 | `--export-gpx-file` | Base name for exported GPX files. |
 | `--dump-candidates-gpx` | Dump bbox-filtered candidates with placeholders `{ref}`, `{run}`, `{rs}`, `{re}`, `{n}`. |
+| `--group-by-segment` | Group output by segment name; default output is sorted by start index. |
 
 ### Matching / Refinement
 
@@ -114,6 +115,7 @@ pip install gpxpy fastdtw openpyxl
 | `--crossing-shape-window-min` | Minimum window size for local crossing shape matching (default `3`). |
 | `--crossing-length-weight` | Length weight for crossing selection (negative = auto). |
 | `--crossing-window-max` | Max crossing search expansion window (default `200`). |
+| `--crossing-edge-window-s` | Start/end crossing search window in seconds (default `1.0`, uses median sampling rate). |
 
 ### Optional Single-Passage Check
 
