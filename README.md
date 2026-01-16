@@ -72,14 +72,19 @@ pip install gpxpy fastdtw openpyxl
 | Option | Description |
 |--------|-------------|
 | `--candidate-margin` | Relative distance tolerance for candidates (default `0.2`). |
+| `--matching-preset` | Preset defaults for strict envelope + DTW window (`standard`, `tight`, `loose`, `none`; default `standard`). |
 | `--candidate-endpoint-margin-m` | Start/end bbox margin for candidate selection (meters); negative uses `--gps-error-m`. |
 | `--envelope-max-m` | Max distance from reference polyline for envelope prefilter; negative uses `--gps-error-m`. |
 | `--envelope-allow-off` | Allowed off-envelope samples per meters: `<points> <meters>` (default `2 100`). |
 | `--envelope-sample-max` | Max number of samples per candidate for envelope prefilter; `0` uses all points. |
+| `--strict-envelope-window-m` | Sliding strict envelope window length in meters; negative disables. |
+| `--strict-envelope-off-pct` | Allowed off-envelope percentage within each strict window; `0` disables. |
 | `--prefilter-xtrack-p95-m` | Enable x-track p95 prefilter (meters); negative disables. |
 | `--prefilter-xtrack-samples` | Sample count for x-track p95 prefilter. |
 | `--allow-length-mismatch` | Allow candidates outside length window. |
 | `--dtw-threshold` | Max avg DTW cost (default `50`). |
+| `--dtw-window-m` | Sliding DTW window length in meters; negative disables. |
+| `--dtw-window-max-avg` | Reject candidates whose max avg DTW within the window exceeds this; negative disables. |
 | `--dtw-penalty` | DTW penalty: `linear`, `quadratic`, `huber`. |
 | `--dtw-penalty-scale-m` | Scale for quadratic DTW penalty (meters). |
 | `--dtw-penalty-huber-k` | Huber k parameter for DTW penalty (meters). |
@@ -113,7 +118,7 @@ pip install gpxpy fastdtw openpyxl
 | `--crossing-length-weight` | Length weight for crossing selection (negative = auto). |
 | `--crossing-window-max` | Max crossing search expansion window (default `200`). |
 | `--crossing-edge-window-s` | Start/end crossing search window in seconds (default `1.0`, uses median sampling rate). |
-| `--crossing-expand-mode` | Crossing search expansion mode when no crossings are found (`fixed` or `ratio`). |
+| `--crossing-expand-mode` | Crossing search expansion mode when no crossings are found (`fixed` or `ratio`, default `ratio`). |
 | `--crossing-expand-k` | Scale factor for ratio-based crossing expansion (default `1.0`). |
 
 ### Optional Single-Passage Check
@@ -198,6 +203,21 @@ pip install gpxpy fastdtw openpyxl
 - **`--line-length-m`** controls how wide the finite line segment is.
 - Default 8m matches typical GPS +-4m accuracy.
 - Use smaller values for kink-heavy segments that intersect the line multiple times.
+
+### Strict Envelope + DTW Window Presets
+- **`--matching-preset standard`** (default) uses 30m window, 0.2 off-pct, 5.0m envelope, 30m DTW window, 5.0 max-avg.
+- **`--matching-preset tight`** is tuned for tightly packed tracks (e.g., Jinacovice); it uses a smaller envelope (2.0m) and stricter DTW window (1.5 max-avg).
+- **`--matching-preset loose`** is for noisy/forested tracks; it allows a larger envelope (10.0m) and higher DTW window max-avg (15.0).
+- **`--matching-preset none`** disables preset defaults so only explicit flags or legacy defaults apply.
+
+### Strict Envelope
+- **`--strict-envelope-window-m`** controls the sliding window length used to enforce local envelope adherence.
+- **`--strict-envelope-off-pct`** caps how many points in each window can be outside the envelope.
+- Combine with **`--envelope-max-m`** to set the envelope width (meters from the reference polyline).
+
+### DTW Sliding Window
+- **`--dtw-window-m`** and **`--dtw-window-max-avg`** guard against long segments that hide local deviations.
+- If you see long candidates with local detours that still pass average DTW, tighten `--dtw-window-max-avg`.
 - Use larger values for noisy recordings where line crossings are offset.
 
 ### Shape Matching

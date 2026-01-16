@@ -396,6 +396,47 @@ def log_config(args: argparse.Namespace, label: str) -> None:
     for key in sorted(vars(args).keys()):
         logging.info("  %s=%s", key, getattr(args, key))
 
+
+def apply_matching_preset(args: argparse.Namespace) -> None:
+    presets = {
+        "standard": {
+            "strict_envelope_window_m": 30.0,
+            "strict_envelope_off_pct": 0.2,
+            "envelope_max_m": 5.0,
+            "dtw_window_m": 30.0,
+            "dtw_window_max_avg": 5.0,
+        },
+        "tight": {
+            "strict_envelope_window_m": 30.0,
+            "strict_envelope_off_pct": 0.2,
+            "envelope_max_m": 2.0,
+            "dtw_window_m": 30.0,
+            "dtw_window_max_avg": 1.5,
+        },
+        "loose": {
+            "strict_envelope_window_m": 30.0,
+            "strict_envelope_off_pct": 0.2,
+            "envelope_max_m": 10.0,
+            "dtw_window_m": 30.0,
+            "dtw_window_max_avg": 15.0,
+        },
+    }
+    if args.matching_preset == "none":
+        return
+    preset = presets.get(args.matching_preset)
+    if not preset:
+        return
+    if args.strict_envelope_window_m is None:
+        args.strict_envelope_window_m = preset["strict_envelope_window_m"]
+    if args.strict_envelope_off_pct is None:
+        args.strict_envelope_off_pct = preset["strict_envelope_off_pct"]
+    if args.envelope_max_m is None:
+        args.envelope_max_m = preset["envelope_max_m"]
+    if args.dtw_window_m is None:
+        args.dtw_window_m = preset["dtw_window_m"]
+    if args.dtw_window_max_avg is None:
+        args.dtw_window_max_avg = preset["dtw_window_max_avg"]
+
 def find_line_crossing(recorded_points: List[Dict[str, Any]],
                        line_anchor: Tuple[float, float],
                        line_normal: Tuple[float, float],
@@ -1369,18 +1410,20 @@ def main() -> None:
                         help="Output file path (required for CSV and XLSX outputs).")
     parser.add_argument("--candidate-margin", type=float, default=0.2,
                         help="Allowed variation (fraction) in candidate segment distance relative to reference.")
+    parser.add_argument("--matching-preset", choices=["standard", "tight", "loose", "none"], default="standard",
+                        help="Preset for strict envelope and DTW window defaults (standard/tight/loose) or none.")
     parser.add_argument("--candidate-endpoint-margin-m", type=float, default=-1.0,
                         help="Start/end bbox margin in meters for candidate selection; negative uses --gps-error-m.")
-    parser.add_argument("--envelope-max-m", type=float, default=-1.0,
+    parser.add_argument("--envelope-max-m", type=float, default=None,
                         help="Max distance from reference polyline for envelope prefilter; negative uses --gps-error-m.")
     parser.add_argument("--envelope-allow-off", nargs=2, type=float, metavar=("POINTS", "METERS"),
                         default=(2, 100.0),
                         help="Allowed off-envelope samples per meters: <points> <meters>.")
     parser.add_argument("--envelope-sample-max", type=int, default=0,
                         help="Max number of samples per candidate for envelope prefilter; 0 uses all points.")
-    parser.add_argument("--strict-envelope-window-m", type=float, default=-1.0,
+    parser.add_argument("--strict-envelope-window-m", type=float, default=None,
                         help="Enable strict envelope prefilter with a sliding window (meters); negative disables.")
-    parser.add_argument("--strict-envelope-off-pct", type=float, default=0.0,
+    parser.add_argument("--strict-envelope-off-pct", type=float, default=None,
                         help="Allowed off-envelope percent per strict window (0 disables).")
     parser.add_argument("--prefilter-xtrack-p95-m", type=float, default=-1.0,
                         help="Enable x-track p95 prefilter (meters); negative disables.")
@@ -1396,9 +1439,9 @@ def main() -> None:
                         help="Reject matches shorter than this fraction of reference length (0 disables).")
     parser.add_argument("--dtw-threshold", type=float, default=50,
                         help="Maximum allowed average DTW distance (m per resampled point) for a match.")
-    parser.add_argument("--dtw-window-m", type=float, default=-1.0,
+    parser.add_argument("--dtw-window-m", type=float, default=None,
                         help="DTW window length in meters for local max-avg checks; negative disables.")
-    parser.add_argument("--dtw-window-max-avg", type=float, default=-1.0,
+    parser.add_argument("--dtw-window-max-avg", type=float, default=None,
                         help="Reject candidates whose max avg DTW within the window exceeds this; negative disables.")
     parser.add_argument("--dtw-penalty", choices=["linear", "quadratic", "huber"], default="linear",
                         help="Penalty function for DTW point distances.")
@@ -1454,7 +1497,7 @@ def main() -> None:
                         help="Max number of points to extend around candidate window when selecting crossings.")
     parser.add_argument("--crossing-edge-window-s", type=float, default=1.0,
                         help="Edge window in seconds for start/end line crossing search (converted using median sampling rate).")
-    parser.add_argument("--crossing-expand-mode", default="fixed",
+    parser.add_argument("--crossing-expand-mode", default="ratio",
                         choices=["fixed", "ratio"],
                         help="How to expand crossing search windows when no crossings are found (fixed or ratio).")
     parser.add_argument("--crossing-expand-k", type=float, default=1.0,
@@ -1481,6 +1524,7 @@ def main() -> None:
     parser.add_argument("--group-by-segment", action="store_true",
                         help="Group output by segment name; otherwise results are sorted by start index.")
     args = parser.parse_args()
+    apply_matching_preset(args)
     log_level = logging.WARNING
     if args.verbose:
         log_level = logging.INFO

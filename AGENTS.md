@@ -77,6 +77,9 @@
     - Start/finish crossing points, marking interpolated points and the bracketing points.
 - Configuration is driven by CLI flags; defaults favor general-purpose matching on common GPX tracks.
   - Candidate endpoint margin is set by `--candidate-endpoint-margin-m` (negative uses `--gps-error-m`).
+  - Default strict envelope + DTW window settings come from `--matching-preset standard` (tight/loose available).
+  - Endpoint refinement windows are in meters (`--endpoint-window-start`, `--endpoint-window-end`) and are converted to points using cumulative distance.
+  - Crossing search expansion defaults to ratio-based growth (`--crossing-expand-mode ratio`) with a hard cap (`--crossing-window-max`).
 
 ## Testing Guidelines
 - Use `tests/run_tests.py` to validate synthetic fixtures and baselines defined in `tests/test_manifest.json`.
