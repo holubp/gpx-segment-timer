@@ -210,6 +210,16 @@ pip install gpxpy fastdtw openpyxl
 - **`--matching-preset loose`** is for noisy/forested tracks; it allows a larger envelope (10.0m) and higher DTW window max-avg (15.0).
 - **`--matching-preset none`** disables preset defaults so only explicit flags or legacy defaults apply.
 
+Preset summary:
+
+| Parameter | `tight` | `standard` | `loose` |
+|-----------|---------|------------|---------|
+| `strict-envelope-window-m` | 30.0 | 30.0 | 30.0 |
+| `strict-envelope-off-pct` | 0.2 | 0.2 | 0.2 |
+| `envelope-max-m` | 2.0 | 5.0 | 10.0 |
+| `dtw-window-m` | 30.0 | 30.0 | 30.0 |
+| `dtw-window-max-avg` | 1.5 | 5.0 | 15.0 |
+
 ### Strict Envelope
 - **`--strict-envelope-window-m`** controls the sliding window length used to enforce local envelope adherence.
 - **`--strict-envelope-off-pct`** caps how many points in each window can be outside the envelope.
