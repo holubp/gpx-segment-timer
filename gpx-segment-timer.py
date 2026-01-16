@@ -16,8 +16,8 @@ The matching process is performed in several stages:
      against the corresponding reference subsegment, and the candidate boundary is slid within a local window.
      
 By default, if the candidate’s start or end deviates beyond the specified --bbox-margin from the reference,
-the segment is rejected. An additional flag (--no-rejection) can be provided to allow segments
-with boundary deviations (only a warning is logged).
+the segment is rejected. Use --skip-endpoint-checks to allow segments with boundary deviations
+(only a warning is logged).
 
 Detected segments (with boundary, DTW, and timing information) are output and optionally exported as GPX.
 
@@ -39,6 +39,8 @@ import re
 
 import gpxpy
 from fastdtw import fastdtw
+
+OVERALL_BBOX_FACTOR = 3.33
 
 def log_gpx_input_stats(filepath: str, label: str) -> None:
     try:
@@ -293,6 +295,34 @@ def point_to_polyline_distance_xy(px: float, py: float, poly_xy: List[Tuple[floa
         if dist < best:
             best = dist
     return best
+
+def compute_xtrack_stats(points: List[Dict[str, Any]],
+                         ref_points: List[Dict[str, Any]],
+                         lat_scale_ref: float,
+                         start_idx: int,
+                         end_idx: int,
+                         sample_max: int = 0) -> Tuple[Optional[float], Optional[float]]:
+    if end_idx - start_idx < 2:
+        return None, None
+    ref_origin = (ref_points[0]["lat"], ref_points[0]["lon"])
+    ref_poly_xy = _points_to_xy([(p["lat"], p["lon"]) for p in ref_points], ref_origin, lat_scale_ref)
+    if not ref_poly_xy:
+        return None, None
+    total_len = end_idx - start_idx
+    step = 1
+    if sample_max > 0 and total_len > sample_max:
+        step = max(1, total_len // sample_max)
+    dists: List[float] = []
+    for i in range(start_idx, end_idx, step):
+        pt = points[i]
+        px, py = _point_to_xy(pt["lat"], pt["lon"], ref_origin, lat_scale_ref)
+        dists.append(point_to_polyline_distance_xy(px, py, ref_poly_xy))
+    if not dists:
+        return None, None
+    dists.sort()
+    p95_idx = int(math.ceil(0.95 * len(dists))) - 1
+    p95 = dists[max(0, min(p95_idx, len(dists) - 1))]
+    return p95, dists[-1]
 
 def build_shape_sequence(points_latlon: List[Tuple[float, float]],
                          shape_mode: str,
@@ -636,6 +666,17 @@ def refine_endpoint_boundary(recorded_points: List[Dict[str, Any]],
             best_idx = i
     return best_idx
 
+def _endpoint_window_pts_from_m(rec_cum_dists: List[float], idx: int, window_m: float) -> int:
+    if window_m <= 0:
+        return 1
+    n = len(rec_cum_dists)
+    idx = max(0, min(idx, n - 1))
+    lower = rec_cum_dists[idx] - window_m
+    upper = rec_cum_dists[idx] + window_m
+    left = bisect.bisect_left(rec_cum_dists, lower, 0, idx + 1)
+    right = bisect.bisect_right(rec_cum_dists, upper, idx, n)
+    return max(1, idx - left, right - idx)
+
 def refine_boundaries_iteratively(recorded_points: List[Dict[str, Any]],
                                   initial_start: int,
                                   initial_end: int,
@@ -769,17 +810,20 @@ def find_all_segment_matches(recorded_points: List[Dict[str, Any]],
                              ref_points: List[Dict[str, Any]],
                              candidate_margin: float,
                              dtw_threshold: float,
+                             dtw_window_m: float,
+                             dtw_window_max_avg: float,
                              resample_count: int,
                              shape_mode: str,
                              lat_scale_ref: float,
                              min_gap: int = 1,
                              bbox_margin_m: float = 30,
-                             bbox_margin_overall_m: float | None = None,
                              gps_error_m: float = 12.0,
-                             start_end_margin_m: float = -1.0,
+                             candidate_endpoint_margin_m: float = -1.0,
                              envelope_max_m: float = -1.0,
                              envelope_allow_off: Tuple[int, float] = (2, 100.0),
                              envelope_sample_max: int = 200,
+                             strict_envelope_window_m: float = -1.0,
+                             strict_envelope_off_pct: float = 0.0,
                              prefilter_xtrack_p95_m: float = -1.0,
                              prefilter_xtrack_samples: int = 80,
                              dump_pattern: Optional[str] = None,
@@ -806,18 +850,17 @@ def find_all_segment_matches(recorded_points: List[Dict[str, Any]],
     ref_origin = (ref_points[0]["lat"], ref_points[0]["lon"])
     ref_poly_xy = _points_to_xy([(p["lat"], p["lon"]) for p in ref_points], ref_origin, lat_scale_ref)
     envelope_max_m = gps_error_m if envelope_max_m < 0 else envelope_max_m
-    start_end_margin_m = gps_error_m if start_end_margin_m < 0 else start_end_margin_m
+    candidate_endpoint_margin_m = gps_error_m if candidate_endpoint_margin_m < 0 else candidate_endpoint_margin_m
 
     # Build bboxes
     ref_bbox = compute_bounding_box(ref_points)
-    overall_margin = bbox_margin_overall_m if (bbox_margin_overall_m is not None) else bbox_margin_m
-    overall_margin = max(overall_margin, gps_error_m)
+    overall_margin = max(bbox_margin_m * OVERALL_BBOX_FACTOR, gps_error_m)
     bbox_overall = expand_bounding_box(ref_bbox, margin_m=overall_margin)
 
     ref_start = {'lat': ref_points[0]['lat'], 'lon': ref_points[0]['lon']}
     ref_end   = {'lat': ref_points[-1]['lat'], 'lon': ref_points[-1]['lon']}
-    bbox_start = expand_bounding_box((ref_start['lat'], ref_start['lat'], ref_start['lon'], ref_start['lon']), margin_m=start_end_margin_m)
-    bbox_end   = expand_bounding_box((ref_end['lat'],   ref_end['lat'],   ref_end['lon'],   ref_end['lon']),   margin_m=start_end_margin_m)
+    bbox_start = expand_bounding_box((ref_start['lat'], ref_start['lat'], ref_start['lon'], ref_start['lon']), margin_m=candidate_endpoint_margin_m)
+    bbox_end   = expand_bounding_box((ref_end['lat'],   ref_end['lat'],   ref_end['lon'],   ref_end['lon']),   margin_m=candidate_endpoint_margin_m)
 
     # Precompute cumulative distances and "outside overall bbox" prefix sum
     rec_cum_dists: List[float] = [0.0]
@@ -837,7 +880,7 @@ def find_all_segment_matches(recorded_points: List[Dict[str, Any]],
     # Precompute distances to reference polyline once per segment.
     dist_all: List[float] = []
     pref_off_all: List[int] = [0] * (len(recorded_points) + 1)
-    if envelope_max_m > 0 or prefilter_xtrack_p95_m > 0:
+    if envelope_max_m > 0 or prefilter_xtrack_p95_m > 0 or strict_envelope_window_m > 0:
         off_all: List[int] = []
         for i, pt in enumerate(recorded_points):
             px, py = _point_to_xy(pt["lat"], pt["lon"], ref_origin, lat_scale_ref)
@@ -845,6 +888,53 @@ def find_all_segment_matches(recorded_points: List[Dict[str, Any]],
             dist_all.append(dist)
             off_all.append(1 if envelope_max_m > 0 and dist > envelope_max_m else 0)
             pref_off_all[i + 1] = pref_off_all[i] + off_all[-1]
+    strict_max_bad_start: Optional[List[int]] = None
+    strict_rejects_total = 0
+    dtw_window_rejects_total = 0
+    if strict_envelope_window_m > 0:
+        if envelope_max_m <= 0:
+            envelope_max_m = gps_error_m
+        n_points = len(recorded_points)
+        end_idx = [0] * n_points
+        j = 0
+        for i in range(n_points):
+            if j < i:
+                j = i
+            while j < n_points and (rec_cum_dists[j] - rec_cum_dists[i]) <= strict_envelope_window_m:
+                j += 1
+            end_idx[i] = max(i, j - 1)
+        starts_by_end: List[List[int]] = [[] for _ in range(n_points)]
+        allow_pts, allow_m = envelope_allow_off
+        allow_m = max(1.0, allow_m)
+        allow_off_base = int(math.ceil(allow_pts * (strict_envelope_window_m / allow_m)))
+        bad_windows = 0
+        for i in range(n_points):
+            e = end_idx[i]
+            if e < i:
+                continue
+            window_pts = e - i + 1
+            off_count = pref_off_all[e + 1] - pref_off_all[i]
+            allowed_off = allow_off_base
+            if strict_envelope_off_pct > 0:
+                allowed_off = max(allowed_off, int(math.ceil(strict_envelope_off_pct * window_pts)))
+            if off_count > allowed_off:
+                starts_by_end[e].append(i)
+                bad_windows += 1
+        strict_max_bad_start = [-1] * n_points
+        max_bad = -1
+        for e in range(n_points):
+            if starts_by_end[e]:
+                max_bad = max(max_bad, max(starts_by_end[e]))
+            strict_max_bad_start[e] = max_bad
+        if logging.getLogger().isEnabledFor(logging.INFO):
+            logging.info(
+                "Envelope prefilter (strict window): window=%.1fm envelope=%.2fm allow_off_base=%d off_pct=%.3f bad_windows=%d",
+                strict_envelope_window_m,
+                envelope_max_m,
+                allow_off_base,
+                strict_envelope_off_pct,
+                bad_windows,
+            )
 
     # Phase 1: enumerate candidate (s,e) pairs
     n = len(recorded_points)
@@ -873,6 +963,7 @@ def find_all_segment_matches(recorded_points: List[Dict[str, Any]],
     for (rs, re) in runs:
         run_candidates_before_filter = 0
         accepted_in_run = 0
+        strict_rejects_run = 0
         # We will log the union of [e_lo, e_hi) ranges for the run
         e_ranges = []
         s = rs
@@ -930,6 +1021,10 @@ def find_all_segment_matches(recorded_points: List[Dict[str, Any]],
                             p95 = sampled[max(0, min(p95_idx, len(sampled) - 1))]
                             if p95 > prefilter_xtrack_p95_m:
                                 continue
+                if strict_max_bad_start is not None and strict_max_bad_start[e] >= s:
+                    strict_rejects_total += 1
+                    strict_rejects_run += 1
+                    continue
                 candidates.append((s, e))
                 run_cands.append((s, e))
                 accepted_in_run += 1
@@ -949,6 +1044,8 @@ def find_all_segment_matches(recorded_points: List[Dict[str, Any]],
                 logging.info("For start-run [%d,%d], end-index windows by distance: %s", rs, re, e_ranges_str)
             logging.info("Run [%d,%d]: %d distance-window pairs pre-filter; %d candidates after bbox filters.",
                          rs, re, run_candidates_before_filter, accepted_in_run)
+            if strict_envelope_window_m > 0:
+                logging.info("Run [%d,%d]: strict envelope rejects: %d", rs, re, strict_rejects_run)
             if accepted_in_run == 0:
                 logging.info("Run [%d,%d] produced no valid end candidates; discarding this start-bbox excursion.", rs, re)
             else:
@@ -962,6 +1059,10 @@ def find_all_segment_matches(recorded_points: List[Dict[str, Any]],
     total_candidates = len(candidates)
     if logging.getLogger().isEnabledFor(logging.INFO):
         logging.info("Total DTW candidates to assess: %d", total_candidates)
+        if strict_envelope_window_m > 0:
+            logging.info("Strict envelope rejects total: %d", strict_rejects_total)
+        if dtw_window_m > 0 and dtw_window_max_avg > 0:
+            logging.info("DTW window rejects total: %d", dtw_window_rejects_total)
 
     # Early exit
     if total_candidates == 0:
@@ -970,25 +1071,48 @@ def find_all_segment_matches(recorded_points: List[Dict[str, Any]],
     # Phase 2: compute DTW best per run (not global), then return list of per-run winners.
     matches: List[Tuple[int, int, float, int, int]] = []
     for run_idx, (rs, re), run_cands in runs_and_candidates:
-        best = None  # (avg_cost, s, e)
+        best = None  # (avg_cost, s, e, max_avg)
+        dtw_window_rejects_run = 0
         for s, e in run_cands:
             cand_pts = recorded_points[s:e+1]
             if len(cand_pts) < 2:
                 continue
             cand_resampled = resample_points(cand_pts, resample_count)
             cand_shape = build_shape_sequence(cand_resampled, shape_mode, lat_scale_ref)
-            dtw_distance, _ = fastdtw(cand_shape, ref_shape, dist=_DTW_DISTANCE_FN)
+            dtw_distance, path = fastdtw(cand_shape, ref_shape, dist=_DTW_DISTANCE_FN)
             denom = max(1, len(ref_shape))
             avg_cost = dtw_distance / denom
+            max_avg = None
+            if dtw_window_m > 0 and dtw_window_max_avg > 0 and path:
+                step_m = ref_total_distance / max(1, len(ref_shape) - 1)
+                window_steps = max(1, int(round(dtw_window_m / max(step_m, 1e-6))))
+                costs = [_DTW_DISTANCE_FN(cand_shape[i], ref_shape[j]) for (i, j) in path]
+                if len(costs) >= window_steps:
+                    window_sum = sum(costs[:window_steps])
+                    max_avg = window_sum / window_steps
+                    for k in range(window_steps, len(costs)):
+                        window_sum += costs[k] - costs[k - window_steps]
+                        max_avg = max(max_avg, window_sum / window_steps)
+                else:
+                    max_avg = sum(costs) / max(1, len(costs))
+                if max_avg > dtw_window_max_avg:
+                    dtw_window_rejects_run += 1
+                    dtw_window_rejects_total += 1
+                    continue
             logging.debug("DTW for run=%d s=%d e=%d: total %f, avg %f.", run_idx, s, e, dtw_distance, avg_cost)
             if best is None or avg_cost < best[0]:
-                best = (avg_cost, s, e)
+                best = (avg_cost, s, e, max_avg)
         if best is not None and best[0] < dtw_threshold:
-            avg_cost, s_idx, e_idx = best
+            avg_cost, s_idx, e_idx, max_avg = best
             matches.append((s_idx, e_idx+1, avg_cost, s_idx, e_idx+1))
-            logging.info("Run %d winner: s=%d e=%d (exclusive), dtw_avg=%.2f", run_idx, s_idx, e_idx+1, avg_cost)
+            if max_avg is not None:
+                logging.info("Run %d winner: s=%d e=%d (exclusive), dtw_avg=%.2f, dtw_window_max_avg=%.2f", run_idx, s_idx, e_idx+1, avg_cost, max_avg)
+            else:
+                logging.info("Run %d winner: s=%d e=%d (exclusive), dtw_avg=%.2f", run_idx, s_idx, e_idx+1, avg_cost)
         else:
             logging.info("Run %d had no DTW winner under threshold (%.2f).", run_idx, dtw_threshold)
+        if dtw_window_m > 0 and dtw_window_max_avg > 0 and dtw_window_rejects_run:
+            logging.info("Run %d: DTW window rejects: %d", run_idx, dtw_window_rejects_run)
     return matches
 
 
@@ -1118,16 +1242,17 @@ def output_results(results: List[Dict[str, Any]],
       - "Ref Dist (m)": total distance of the reference segment.
       - "Detected Dist (m)": total distance of the detected segment.
     """
-    header = ["Segment", "Start Idx", "End Idx", "Start Cross 0", "Start Cross 1",
+    header = ["Match", "Segment", "Start Idx", "End Idx", "Start Cross 0", "Start Cross 1",
               "End Cross 0", "End Cross 1", "Start Interp", "End Interp",
               "Ref Dist (m)", "Detected Dist (m)",
               "DTW Avg (m)", "Time (s)", "Time (H:M:S)",
               "Ref Start", "Ref End", "Start Diff (m)", "End Diff (m)"]
     if output_mode == "stdout":
-        print("{:<25} {:>10} {:>10} {:>12} {:>12} {:>12} {:>12} {:>12} {:>10} {:>15} {:>20} {:>15} {:>12} {:>15} {:>25} {:>25} {:>18} {:>15}".format(*header))
+        print("{:<8} {:<25} {:>10} {:>10} {:>12} {:>12} {:>12} {:>12} {:>12} {:>10} {:>15} {:>20} {:>15} {:>12} {:>15} {:>25} {:>25} {:>18} {:>15}".format(*header))
         print("-" * 240)
         for res in results:
-            print("{:<25} {:>10} {:>10} {:>12} {:>12} {:>12} {:>12} {:>12} {:>10} {:>15.2f} {:>20.2f} {:>15.2f} {:>12.2f} {:>15} {:>25} {:>25} {:>18.2f} {:>15.2f}".format(
+            print("{:<8} {:<25} {:>10} {:>10} {:>12} {:>12} {:>12} {:>12} {:>12} {:>10} {:>15.2f} {:>20.2f} {:>15.2f} {:>12.2f} {:>15} {:>25} {:>25} {:>18.2f} {:>15.2f}".format(
+                f"match{res['match_num']}",
                 res["segment"],
                 res["start_index"],
                 res["end_index"],
@@ -1155,6 +1280,7 @@ def output_results(results: List[Dict[str, Any]],
             writer.writerow(header)
             for res in results:
                 writer.writerow([
+                    f"match{res['match_num']}",
                     res["segment"],
                     res["start_index"],
                     res["end_index"],
@@ -1186,6 +1312,7 @@ def output_results(results: List[Dict[str, Any]],
         ws.append(header)
         for res in results:
             ws.append([
+                f"match{res['match_num']}",
                 res["segment"],
                 res["start_index"],
                 res["end_index"],
@@ -1224,7 +1351,7 @@ def main() -> None:
     
     The detected segment’s boundaries are compared against the reference endpoints.
     By default, if the difference exceeds --bbox-margin, the segment is rejected.
-    With the flag --no-rejection the segment is stored (with a warning).
+    With the flag --skip-endpoint-checks the segment is stored (with a warning).
     Optionally, matched segments are exported as GPX tracks.
     Output includes both the reference segment's length and the detected segment's length.
     """
@@ -1242,7 +1369,7 @@ def main() -> None:
                         help="Output file path (required for CSV and XLSX outputs).")
     parser.add_argument("--candidate-margin", type=float, default=0.2,
                         help="Allowed variation (fraction) in candidate segment distance relative to reference.")
-    parser.add_argument("--start-end-margin-m", type=float, default=-1.0,
+    parser.add_argument("--candidate-endpoint-margin-m", type=float, default=-1.0,
                         help="Start/end bbox margin in meters for candidate selection; negative uses --gps-error-m.")
     parser.add_argument("--envelope-max-m", type=float, default=-1.0,
                         help="Max distance from reference polyline for envelope prefilter; negative uses --gps-error-m.")
@@ -1251,14 +1378,28 @@ def main() -> None:
                         help="Allowed off-envelope samples per meters: <points> <meters>.")
     parser.add_argument("--envelope-sample-max", type=int, default=0,
                         help="Max number of samples per candidate for envelope prefilter; 0 uses all points.")
+    parser.add_argument("--strict-envelope-window-m", type=float, default=-1.0,
+                        help="Enable strict envelope prefilter with a sliding window (meters); negative disables.")
+    parser.add_argument("--strict-envelope-off-pct", type=float, default=0.0,
+                        help="Allowed off-envelope percent per strict window (0 disables).")
     parser.add_argument("--prefilter-xtrack-p95-m", type=float, default=-1.0,
                         help="Enable x-track p95 prefilter (meters); negative disables.")
     parser.add_argument("--prefilter-xtrack-samples", type=int, default=80,
                         help="Number of samples for x-track p95 prefilter.")
+    parser.add_argument("--final-xtrack-p95-m", type=float, default=-1.0,
+                        help="Reject final matches if x-track p95 exceeds this (meters); negative disables.")
+    parser.add_argument("--final-xtrack-max-m", type=float, default=-1.0,
+                        help="Reject final matches if x-track max exceeds this (meters); negative disables.")
     parser.add_argument("--allow-length-mismatch", action="store_true",
                         help="Allow final detected segment length to differ from reference beyond candidate-margin without rejecting the match.")
+    parser.add_argument("--min-length-ratio", type=float, default=0.8,
+                        help="Reject matches shorter than this fraction of reference length (0 disables).")
     parser.add_argument("--dtw-threshold", type=float, default=50,
                         help="Maximum allowed average DTW distance (m per resampled point) for a match.")
+    parser.add_argument("--dtw-window-m", type=float, default=-1.0,
+                        help="DTW window length in meters for local max-avg checks; negative disables.")
+    parser.add_argument("--dtw-window-max-avg", type=float, default=-1.0,
+                        help="Reject candidates whose max avg DTW within the window exceeds this; negative disables.")
     parser.add_argument("--dtw-penalty", choices=["linear", "quadratic", "huber"], default="linear",
                         help="Penalty function for DTW point distances.")
     parser.add_argument("--dtw-penalty-scale-m", type=float, default=10.0,
@@ -1279,16 +1420,12 @@ def main() -> None:
                         help="Minimum number of recorded points to skip after a match.")
     parser.add_argument("--bbox-margin", type=float, default=30,
                         help="Endpoint bbox expansion (meters) for start/end checks.")
-    parser.add_argument("--bbox-margin-overall", type=float, default=100,
-                        help="Overall bbox expansion (meters) for containment check. If not set, defaults to --bbox-margin.")
     parser.add_argument("--single-passage", action="store_true",
                         help="Enforce that within the detected segment the trajectory enters the start buffer once at the beginning and the end buffer once at the end.")
     parser.add_argument("--passage-radius", type=float, default=30.0,
                         help="Radius in meters for start/end buffers used by --single-passage (defaults close to bbox-margin).")
     parser.add_argument("--passage-edge-frac", type=float, default=0.10,
                         help="How close to the segment edges the start/end buffer touches must occur (fraction of point count).")
-    parser.add_argument("--refine-window", type=int, default=5,
-                        help="Window size (in points) for initial shape-based boundary refinement.")
     parser.add_argument("--iterative-window-start", type=int, default=20,
                         help="Search window (in points) for adjusting the start boundary independently.")
     parser.add_argument("--iterative-window-end", type=int, default=20,
@@ -1317,17 +1454,15 @@ def main() -> None:
                         help="Max number of points to extend around candidate window when selecting crossings.")
     parser.add_argument("--crossing-edge-window-s", type=float, default=1.0,
                         help="Edge window in seconds for start/end line crossing search (converted using median sampling rate).")
-    parser.add_argument("--endpoint-window-start", type=int, default=1000,
-                        help="Local sliding window (in points) for refining the start boundary.")
-    parser.add_argument("--endpoint-window-end", type=int, default=1000,
-                        help="Local sliding window (in points) for refining the end boundary.")
+    parser.add_argument("--endpoint-window-start", type=float, default=10.0,
+                        help="Local sliding window (meters) for refining the start boundary.")
+    parser.add_argument("--endpoint-window-end", type=float, default=10.0,
+                        help="Local sliding window (meters) for refining the end boundary.")
     parser.add_argument("--no-refinement", action="store_true",
                         help="Disable final boundary refinements; use DTW-selected candidate indices as the result.")
-    # New flag: by default segments are rejected when boundaries deviate beyond --bbox-margin.
-    parser.add_argument("--no-rejection", action="store_true",
-                        help="Do not reject segments that deviate beyond --bbox-margin (only log a warning).")
+    # By default segments are rejected when boundaries deviate beyond --bbox-margin.
     parser.add_argument("--skip-endpoint-checks", action="store_true",
-                        help="Alias to disable endpoint deviation rejection (sets --no-rejection)."),
+                        help="Do not reject segments that deviate beyond --bbox-margin (only log a warning).")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Enable verbose logging (INFO level).")
     parser.add_argument("-d", "--debug", action="store_true",
@@ -1341,9 +1476,6 @@ def main() -> None:
     parser.add_argument("--group-by-segment", action="store_true",
                         help="Group output by segment name; otherwise results are sorted by start index.")
     args = parser.parse_args()
-    if getattr(args, 'skip_endpoint_checks', False):
-        args.no_rejection = True
-
     log_level = logging.WARNING
     if args.verbose:
         log_level = logging.INFO
@@ -1415,17 +1547,20 @@ def main() -> None:
             ref_points,
             candidate_margin=args.candidate_margin,
             dtw_threshold=args.dtw_threshold,
+            dtw_window_m=args.dtw_window_m,
+            dtw_window_max_avg=args.dtw_window_max_avg,
             resample_count=resample_count,
             shape_mode=shape_mode,
             lat_scale_ref=lat_scale_ref,
             min_gap=args.min_gap,
             bbox_margin_m=args.bbox_margin,
-            bbox_margin_overall_m=(args.bbox_margin_overall if hasattr(args, 'bbox_margin_overall') else None),
             gps_error_m=args.gps_error_m,
-            start_end_margin_m=args.start_end_margin_m,
+            candidate_endpoint_margin_m=args.candidate_endpoint_margin_m,
             envelope_max_m=args.envelope_max_m,
             envelope_allow_off=(int(args.envelope_allow_off[0]), float(args.envelope_allow_off[1])),
             envelope_sample_max=args.envelope_sample_max,
+            strict_envelope_window_m=args.strict_envelope_window_m,
+            strict_envelope_off_pct=args.strict_envelope_off_pct,
             prefilter_xtrack_p95_m=args.prefilter_xtrack_p95_m,
             prefilter_xtrack_samples=args.prefilter_xtrack_samples,
             dump_pattern=args.dump_candidates_gpx,
@@ -1479,11 +1614,13 @@ def main() -> None:
                         iterative_window_end=args.iterative_window_end,
                         penalty_weight=args.penalty_weight)
                 spatial_weight = args.endpoint_spatial_weight
+                start_window_pts = _endpoint_window_pts_from_m(rec_cum_dists, grid_start, args.endpoint_window_start)
+                end_window_pts = _endpoint_window_pts_from_m(rec_cum_dists, grid_end - 1, args.endpoint_window_end)
                 final_start = refine_endpoint_boundary(
-                    recorded_points, grid_start, ref_start_sub, L, args.endpoint_window_start, True,
+                    recorded_points, grid_start, ref_start_sub, L, start_window_pts, True,
                     shape_mode, lat_scale_ref, ref_start_coords, spatial_weight)
                 final_end = refine_endpoint_boundary(
-                    recorded_points, grid_end - 1, ref_end_sub, L, args.endpoint_window_end, False,
+                    recorded_points, grid_end - 1, ref_end_sub, L, end_window_pts, False,
                     shape_mode, lat_scale_ref, ref_end_coords, spatial_weight) + 1
                 # Fallback if refinement breaks monotonicity/length
                 used_fallback = False
@@ -1769,6 +1906,12 @@ def main() -> None:
             length_ratio = detected_distance / ref_distance if ref_distance > 0 else float('inf')
             min_ratio = 1.0 - args.candidate_margin
             max_ratio = 1.0 + args.candidate_margin
+            if args.min_length_ratio > 0 and length_ratio < args.min_length_ratio:
+                logging.warning("Rejected match for '%s': length ratio %.3f below min %.3f (detected %.2f m vs ref %.2f m).",
+                                seg_filename, length_ratio, args.min_length_ratio, detected_distance, ref_distance)
+                logging.info("Rejected DTW winner for '%s' at [%d,%d): length ratio %.3f below min %.3f.",
+                             seg_filename, final_start, final_end, length_ratio, args.min_length_ratio)
+                continue
             if not args.allow_length_mismatch and not (min_ratio <= length_ratio <= max_ratio):
                 if start_diff <= args.bbox_margin and end_diff <= args.bbox_margin:
                     logging.warning("Length mismatch tolerated for '%s' due to endpoint alignment (ratio %.3f).",
@@ -1819,13 +1962,13 @@ def main() -> None:
                     e_t1 = recorded_points[e_idx1].get("time")
                     logging.info("Finish interpolation for '%s': idx0=%d time0=%s idx1=%d time1=%s interp_time=%s",
                                  seg_filename, e_idx0, e_t0, e_idx1, e_t1, end_crossing.get("time"))
-            if (start_diff > args.bbox_margin or end_diff > args.bbox_margin) and not args.no_rejection:
+            if (start_diff > args.bbox_margin or end_diff > args.bbox_margin) and not args.skip_endpoint_checks:
                 if not used_fallback:
                     logging.warning("Refined boundaries deviate; falling back to original candidate [%d,%d).", orig_start, orig_end)
                     final_start, final_end = orig_start, orig_end
                     detected_start_coords, detected_end_coords, start_diff, end_diff, start_crossing, end_crossing = compute_crossings_and_diffs(final_start, final_end)
                     used_fallback = True
-                if (start_diff > args.bbox_margin or end_diff > args.bbox_margin) and not args.no_rejection:
+                if (start_diff > args.bbox_margin or end_diff > args.bbox_margin) and not args.skip_endpoint_checks:
                     if args.single_passage:
                         ok = enforce_single_passage(recorded_points, final_start, final_end,
                                                   ref_start_coords, ref_end_coords,
@@ -1842,6 +1985,25 @@ def main() -> None:
                     logging.info("Rejected DTW winner for '%s' at [%d,%d): endpoint deviation.",
                                  seg_filename, final_start, final_end)
                     continue
+            if args.final_xtrack_p95_m > 0 or args.final_xtrack_max_m > 0:
+                p95, xmax = compute_xtrack_stats(
+                    recorded_points, ref_points, lat_scale_ref, final_start, final_end, sample_max=0
+                )
+                if p95 is not None and xmax is not None:
+                    logging.info("Final xtrack for '%s': p95=%.2f m, max=%.2f m.",
+                                 seg_filename, p95, xmax)
+                    if args.final_xtrack_p95_m > 0 and p95 > args.final_xtrack_p95_m:
+                        logging.warning("Rejected match for '%s': xtrack p95 %.2f m exceeds %.2f m.",
+                                        seg_filename, p95, args.final_xtrack_p95_m)
+                        logging.info("Rejected DTW winner for '%s' at [%d,%d): xtrack p95 gate.",
+                                     seg_filename, final_start, final_end)
+                        continue
+                    if args.final_xtrack_max_m > 0 and xmax > args.final_xtrack_max_m:
+                        logging.warning("Rejected match for '%s': xtrack max %.2f m exceeds %.2f m.",
+                                        seg_filename, xmax, args.final_xtrack_max_m)
+                        logging.info("Rejected DTW winner for '%s' at [%d,%d): xtrack max gate.",
+                                     seg_filename, final_start, final_end)
+                        continue
             time_seconds = None
             if start_crossing and end_crossing and start_crossing.get("time") and end_crossing.get("time"):
                 time_seconds = (end_crossing["time"] - start_crossing["time"]).total_seconds()
@@ -1860,7 +2022,9 @@ def main() -> None:
                     break
             else:
                 accepted_windows.append((final_start, final_end))
+                match_num = len(results) + 1
                 result = {
+                    "match_num": match_num,
                     "segment": seg_filename,
                     "start_index": final_start,
                     "end_index": final_end,
@@ -1886,7 +2050,6 @@ def main() -> None:
                 logging.info("Segment %s: indices (%d, %d), ref_dist=%.2f m, detected_dist=%.2f m, dtw_avg=%.2f, time=%s, start_diff=%.2f m, end_diff=%.2f m",
                              seg_filename, final_start, final_end, ref_distance, detected_distance, dtw_avg, time_str, start_diff, end_diff)
                 if args.export_gpx:
-                    match_num = len(results)
                     export_filename = f"{os.path.splitext(args.export_gpx_file)[0]}_{seg_filename}_match{match_num}.gpx"
                     export_match_bundle(
                         result,
@@ -1901,9 +2064,9 @@ def main() -> None:
                     )
     if results:
         if args.group_by_segment:
-            results.sort(key=lambda r: (r["segment"], r["start_index"]))
+            results.sort(key=lambda r: (r["segment"], r["start_index"], -(r["end_index"] - r["start_index"])))
         else:
-            results.sort(key=lambda r: r["start_index"])
+            results.sort(key=lambda r: (r["start_index"], -(r["end_index"] - r["start_index"])))
         output_results(results, args.output_mode, args.output_file)
     else:
         logging.info("No matching segments detected in the recorded track.")

@@ -72,7 +72,7 @@ pip install gpxpy fastdtw openpyxl
 | Option | Description |
 |--------|-------------|
 | `--candidate-margin` | Relative distance tolerance for candidates (default `0.2`). |
-| `--start-end-margin-m` | Start/end bbox margin for candidate selection (meters); negative uses `--gps-error-m`. |
+| `--candidate-endpoint-margin-m` | Start/end bbox margin for candidate selection (meters); negative uses `--gps-error-m`. |
 | `--envelope-max-m` | Max distance from reference polyline for envelope prefilter; negative uses `--gps-error-m`. |
 | `--envelope-allow-off` | Allowed off-envelope samples per meters: `<points> <meters>` (default `2 100`). |
 | `--envelope-sample-max` | Max number of samples per candidate for envelope prefilter; `0` uses all points. |
@@ -87,11 +87,9 @@ pip install gpxpy fastdtw openpyxl
 | `--gps-error-m` | GPS error estimate in meters (default `12`). |
 | `--target-spacing-m` | Target meters between resampled points (default `8`). |
 | `--resample-max` | Max resample count when using target spacing (default `400`). |
-| `--resample-count` | Fixed resample count when target spacing is not used (default `200`). |
+| `--resample-count` | Fixed resample count when target spacing is not used (default `200`, ignored when `--target-spacing-m > 0`). |
 | `--min-gap` | Minimum points to skip after a match (default `1`). |
-| `--bbox-margin` | Endpoint deviation tolerance in meters (default `30`). |
-| `--bbox-margin-overall` | Overall bbox margin in meters (default `100`). |
-| `--refine-window` | Legacy window (kept for compatibility). |
+| `--bbox-margin` | Endpoint deviation tolerance in meters (default `30`); overall bbox margin is `--bbox-margin * 3.33`. |
 | `--iterative-window-start` | Start refinement window (default `20`). |
 | `--iterative-window-end` | End refinement window (default `20`). |
 | `--penalty-weight` | Endpoint distance penalty during refinement (default `2.0`). |
@@ -101,8 +99,7 @@ pip install gpxpy fastdtw openpyxl
 | `--endpoint-window-end` | End endpoint sliding window in points (default `1000`). |
 | `--endpoint-spatial-weight` | Spatial weight in endpoint refinement (default `0.25`). |
 | `--no-refinement` | Disable refinement steps. |
-| `--no-rejection` | Keep matches even if endpoint diffs exceed `--bbox-margin`. |
-| `--skip-endpoint-checks` | Skip endpoint rejection checks. |
+| `--skip-endpoint-checks` | Keep matches even if endpoint diffs exceed `--bbox-margin`. |
 
 ### Start/Finish Crossing Logic
 
@@ -214,8 +211,8 @@ pip install gpxpy fastdtw openpyxl
 ### Candidate Selection
 - **`--candidate-margin`** expands or tightens candidate distance windows.
 - **`--bbox-margin`** controls endpoint tolerance; tighter values reject more noise but can miss shifted tracks.
- - **`--start-end-margin-m`** tightens start/end candidate bboxes independent of endpoint rejection.
- - **`--envelope-max-m`** and **`--envelope-allow-off-per-100m`** prune candidates that drift off the reference polyline.
+ - **`--candidate-endpoint-margin-m`** tightens start/end candidate bboxes independent of endpoint rejection.
+ - **`--envelope-max-m`** and **`--envelope-allow-off`** prune candidates that drift off the reference polyline.
  - **`--prefilter-xtrack-p95-m`** adds an optional percentile-based cross-track gate.
 
 ### Refinement
@@ -224,6 +221,13 @@ pip install gpxpy fastdtw openpyxl
 
 ### Debugging
 - Use **`--dump-candidates-gpx`** and **`--export-gpx`** to visually inspect candidate windows, line crossings, and interpolation points.
+- Use **`tools/debug_match_metrics.py`** to compute matching metrics for an exported match GPX against its embedded reference, and optionally compare against other reference segments.
+
+```
+python3 tools/debug_match_metrics.py tuning-needed/example_match.gpx \
+  --ref-segment segments/Jinacovice-vnejsi-dlouhy.gpx \
+  --shape-mode step_vectors --target-spacing-m 8 --line-length-m 8
+```
 
 ---
 

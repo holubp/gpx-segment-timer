@@ -10,6 +10,7 @@
 ## Build, Test, and Development Commands
 - `python3 gpx-segment-timer.py -r example.gpx -f segments` runs a basic match against bundled data.
 - `python3 gpx-segment-timer.py -r <track.gpx> -f segments --export-gpx` exports matched segments for inspection.
+- `python3 tools/debug_match_metrics.py <match.gpx> --ref-segment segments/<segment.gpx>` inspects metrics for an exported match GPX.
 - `python3 tests/tools/generate_synthetic_data.py` regenerates synthetic GPX fixtures and expected results.
 - `python3 tests/run_tests.py` runs the regression test manifest.
 - `pip install gpxpy fastdtw openpyxl` installs required dependencies for GPX parsing, DTW, and XLSX output.
@@ -41,6 +42,7 @@
     - Start/finish matching that remains correct when the rider lingers around the start/finish area before/after the segment; use shape + line crossings, not local random walk.
     - Robustness to localized chaos (e.g., a rider falls or stops mid-segment, producing a dense point cloud); boundaries should still be determined by shape + line crossings with interpolation.
     - Start/finish crossing disambiguation using local shape matching near the crossings so that lines intersecting multiple times pick the shape-consistent crossing.
+    - Endpoint deviation checks by default; `--skip-endpoint-checks` allows keeping matches even when endpoint diffs exceed the margin.
   - Consider GPS variations/inaccuracies:
     - Support normal GPS recordings as primary input; RTK GPX should also work (possibly with gaps).
     - Translation tolerance: shape matching should be translation-invariant while still enforcing spatial proximity limits so identical shapes in different locations do not match.
@@ -55,10 +57,10 @@
 - Keep outputs usable for quick review (stdout) and structured export (CSV/XLSX).
 
 ## Architecture
-- Python CLI (`gpx-segment-timer.py`) that loads recorded/segment GPX data 
 - Python CLI (`gpx-segment-timer.py`) that loads recorded/segment GPX data.
   - Can remain a single file or be decomposed later for maintainability.
 - Pipeline: coarse candidate selection (distance + bounding boxes or other heuristics), DTW-based refinement, iterative boundary search, and endpoint anchoring with interpolation based on segment shape and length.
+- Coarse gating uses multiple spatial filters: start/end candidate bboxes, overall bbox (derived from `--bbox-margin * 3.33`), rhomboid overlap, envelope distance, and optional x-track p95 filters.
 - Matching is translation-tolerant but bounded: shape matching is translation-invariant while enforcing spatial proximity limits (GPS error bounds).
 - Start/finish crossings are detected within the shape-matched window to avoid false matches when lingering around start/finish.
 - Optional single-passage validation to reject re-entries on reference segments without repetitions/self-intersections (off by default; only on user request and only when references satisfy requirements).
@@ -74,6 +76,7 @@
     - Start and finish lines as separate tracks (two points each), matching the configured line length.
     - Start/finish crossing points, marking interpolated points and the bracketing points.
 - Configuration is driven by CLI flags; defaults favor general-purpose matching on common GPX tracks.
+  - Candidate endpoint margin is set by `--candidate-endpoint-margin-m` (negative uses `--gps-error-m`).
 
 ## Testing Guidelines
 - Use `tests/run_tests.py` to validate synthetic fixtures and baselines defined in `tests/test_manifest.json`.
