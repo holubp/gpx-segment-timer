@@ -1454,6 +1454,11 @@ def main() -> None:
                         help="Max number of points to extend around candidate window when selecting crossings.")
     parser.add_argument("--crossing-edge-window-s", type=float, default=1.0,
                         help="Edge window in seconds for start/end line crossing search (converted using median sampling rate).")
+    parser.add_argument("--crossing-expand-mode", default="fixed",
+                        choices=["fixed", "ratio"],
+                        help="How to expand crossing search windows when no crossings are found (fixed or ratio).")
+    parser.add_argument("--crossing-expand-k", type=float, default=1.0,
+                        help="Scale factor for ratio-based crossing window expansion.")
     parser.add_argument("--endpoint-window-start", type=float, default=10.0,
                         help="Local sliding window (meters) for refining the start boundary.")
     parser.add_argument("--endpoint-window-end", type=float, default=10.0,
@@ -1709,8 +1714,26 @@ def main() -> None:
                     edge_window = min(args.crossing_window_max, edge_window)
                     endpoint_start_pts = _endpoint_window_pts_from_m(rec_cum_dists, start_idx, args.endpoint_window_start)
                     endpoint_end_pts = _endpoint_window_pts_from_m(rec_cum_dists, end_idx - 1, args.endpoint_window_end)
-                    expanded_start_window = min(args.crossing_window_max, max(edge_window, endpoint_start_pts))
-                    expanded_end_window = min(args.crossing_window_max, max(edge_window, endpoint_end_pts))
+                    expanded_start_window = max(edge_window, endpoint_start_pts)
+                    expanded_end_window = max(edge_window, endpoint_end_pts)
+                    if args.crossing_expand_mode == "ratio" and ref_distance > 0:
+                        expected_end_idx = bisect.bisect_left(
+                            rec_cum_dists, rec_cum_dists[start_idx] + ref_distance,
+                            lo=start_idx + 1, hi=len(rec_cum_dists))
+                        expected_start_idx = bisect.bisect_right(
+                            rec_cum_dists, rec_cum_dists[end_idx] - ref_distance,
+                            lo=0, hi=end_idx)
+                        expected_pts_start = max(1, expected_end_idx - start_idx)
+                        expected_pts_end = max(1, end_idx - expected_start_idx)
+                        local_detected = rec_cum_dists[end_idx] - rec_cum_dists[start_idx]
+                        length_ratio = local_detected / ref_distance
+                        ratio_factor = max(1.0, length_ratio)
+                        dynamic_start = int(round(args.crossing_expand_k * expected_pts_start * ratio_factor))
+                        dynamic_end = int(round(args.crossing_expand_k * expected_pts_end * ratio_factor))
+                        expanded_start_window = max(expanded_start_window, dynamic_start)
+                        expanded_end_window = max(expanded_end_window, dynamic_end)
+                    expanded_start_window = min(args.crossing_window_max, expanded_start_window)
+                    expanded_end_window = min(args.crossing_window_max, expanded_end_window)
 
                     s_lo = max(0, start_idx - edge_window)
                     s_hi = min(len(recorded_points) - 1, start_idx + edge_window)
@@ -1734,8 +1757,8 @@ def main() -> None:
                             recorded_points, ref_start_coords, start_normal, s_lo2, s_hi2, start_lat_scale, line_half_len)
                         if args.verbose:
                             logging.info(
-                                "Expanded start crossing window for '%s' from %d to %d points.",
-                                seg_filename, edge_window, expanded_start_window)
+                                "Expanded start crossing window for '%s' from %d to %d points (mode=%s).",
+                                seg_filename, edge_window, expanded_start_window, args.crossing_expand_mode)
 
                     if not end_crossings and expanded_end_window > edge_window:
                         e_lo2 = max(0, end_idx - expanded_end_window)
@@ -1746,8 +1769,8 @@ def main() -> None:
                             recorded_points, ref_end_coords, end_normal, e_lo2, e_hi2, end_lat_scale, line_half_len)
                         if args.verbose:
                             logging.info(
-                                "Expanded end crossing window for '%s' from %d to %d points.",
-                                seg_filename, edge_window, expanded_end_window)
+                                "Expanded end crossing window for '%s' from %d to %d points (mode=%s).",
+                                seg_filename, edge_window, expanded_end_window, args.crossing_expand_mode)
 
                     def end_crossings_for_start(s_idx: int) -> List[Dict[str, Any]]:
                         extra = max(args.gps_error_m * 4.0, ref_distance * 0.02)

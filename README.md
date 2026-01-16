@@ -95,8 +95,8 @@ pip install gpxpy fastdtw openpyxl
 | `--penalty-weight` | Endpoint distance penalty during refinement (default `2.0`). |
 | `--anchor-beta1` | Start subsegment weight (default `1.0`). |
 | `--anchor-beta2` | End subsegment weight (default `1.0`). |
-| `--endpoint-window-start` | Start endpoint sliding window in points (default `1000`). |
-| `--endpoint-window-end` | End endpoint sliding window in points (default `1000`). |
+| `--endpoint-window-start` | Start endpoint sliding window in meters (default `10.0`, converted to points using cumulative distance). |
+| `--endpoint-window-end` | End endpoint sliding window in meters (default `10.0`, converted to points using cumulative distance). |
 | `--endpoint-spatial-weight` | Spatial weight in endpoint refinement (default `0.25`). |
 | `--no-refinement` | Disable refinement steps. |
 | `--skip-endpoint-checks` | Keep matches even if endpoint diffs exceed `--bbox-margin`. |
@@ -113,6 +113,8 @@ pip install gpxpy fastdtw openpyxl
 | `--crossing-length-weight` | Length weight for crossing selection (negative = auto). |
 | `--crossing-window-max` | Max crossing search expansion window (default `200`). |
 | `--crossing-edge-window-s` | Start/end crossing search window in seconds (default `1.0`, uses median sampling rate). |
+| `--crossing-expand-mode` | Crossing search expansion mode when no crossings are found (`fixed` or `ratio`). |
+| `--crossing-expand-k` | Scale factor for ratio-based crossing expansion (default `1.0`). |
 
 ### Optional Single-Passage Check
 

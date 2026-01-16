@@ -168,25 +168,29 @@ def _compute_metrics(mod: Any,
                      resample_override: Optional[int] = None,
                      crossing_edge_window_pts_override: Optional[int] = None,
                      crossing_L_override: Optional[int] = None) -> Dict[str, Any]:
-    def endpoint_window_pts_from_m(points: List[Dict[str, Any]], idx: int, window_m: float) -> int:
-        if window_m <= 0 or not points:
-            return 1
-        rec_cum = [0.0]
+    def build_cum(points: List[Dict[str, Any]]) -> List[float]:
+        cum = [0.0]
         for i in range(1, len(points)):
             prev = points[i - 1]
             curr = points[i]
-            rec_cum.append(rec_cum[-1] + mod.haversine_distance(
+            cum.append(cum[-1] + mod.haversine_distance(
                 (prev["lat"], prev["lon"]), (curr["lat"], curr["lon"])
             ))
-        idx = max(0, min(idx, len(rec_cum) - 1))
-        lower = rec_cum[idx] - window_m
-        upper = rec_cum[idx] + window_m
-        left = bisect.bisect_left(rec_cum, lower, 0, idx + 1)
-        right = bisect.bisect_right(rec_cum, upper, idx, len(rec_cum))
+        return cum
+
+    def endpoint_window_pts_from_m(cum: List[float], idx: int, window_m: float) -> int:
+        if window_m <= 0 or not cum:
+            return 1
+        idx = max(0, min(idx, len(cum) - 1))
+        lower = cum[idx] - window_m
+        upper = cum[idx] + window_m
+        left = bisect.bisect_left(cum, lower, 0, idx + 1)
+        right = bisect.bisect_right(cum, upper, idx, len(cum))
         return max(1, idx - left, right - idx)
 
     ref_distance = mod.compute_total_distance(ref_points)
     match_distance = mod.compute_total_distance(match_points)
+    match_cum = build_cum(match_points)
     resample_count = args.resample_count
     if args.target_spacing_m > 0:
         resample_count = mod.compute_resample_count(ref_points, args.target_spacing_m, args.resample_max)
@@ -224,10 +228,23 @@ def _compute_metrics(mod: Any,
         edge_window_pts = max(1, int(round(0.1 * resample_count)))
     edge_window_pts = min(args.crossing_window_max, edge_window_pts)
 
-    endpoint_start_pts = endpoint_window_pts_from_m(match_points, 0, args.endpoint_window_start)
-    endpoint_end_pts = endpoint_window_pts_from_m(match_points, len(match_points) - 1, args.endpoint_window_end)
+    endpoint_start_pts = endpoint_window_pts_from_m(match_cum, 0, args.endpoint_window_start)
+    endpoint_end_pts = endpoint_window_pts_from_m(match_cum, len(match_points) - 1, args.endpoint_window_end)
     expanded_start_window = min(args.crossing_window_max, max(edge_window_pts, endpoint_start_pts))
     expanded_end_window = min(args.crossing_window_max, max(edge_window_pts, endpoint_end_pts))
+    if args.crossing_expand_mode == "ratio" and ref_distance > 0 and match_cum:
+        expected_end_idx = bisect.bisect_left(
+            match_cum, match_cum[0] + ref_distance, lo=1, hi=len(match_cum))
+        expected_start_idx = bisect.bisect_right(
+            match_cum, match_cum[-1] - ref_distance, lo=0, hi=len(match_cum) - 1)
+        expected_pts_start = max(1, expected_end_idx)
+        expected_pts_end = max(1, len(match_cum) - 1 - expected_start_idx)
+        length_ratio = match_distance / ref_distance
+        ratio_factor = max(1.0, length_ratio)
+        dynamic_start = int(round(args.crossing_expand_k * expected_pts_start * ratio_factor))
+        dynamic_end = int(round(args.crossing_expand_k * expected_pts_end * ratio_factor))
+        expanded_start_window = min(args.crossing_window_max, max(expanded_start_window, dynamic_start))
+        expanded_end_window = min(args.crossing_window_max, max(expanded_end_window, dynamic_end))
 
     start_cross, end_cross, start_crossings, end_crossings = _compute_crossings(
         mod, match_points, ref_points, edge_window_pts, args.line_length_m
@@ -419,6 +436,8 @@ def _apply_log_config(args: argparse.Namespace, config: Dict[str, str]) -> None:
         "line_length_m": "line_length_m",
         "crossing_edge_window_s": "crossing_edge_window_s",
         "crossing_window_max": "crossing_window_max",
+        "crossing_expand_mode": "crossing_expand_mode",
+        "crossing_expand_k": "crossing_expand_k",
         "crossing_shape_window_frac": "crossing_shape_window_frac",
         "crossing_shape_window_min": "crossing_shape_window_min",
         "endpoint_window_start": "endpoint_window_start",
@@ -540,6 +559,11 @@ def main() -> None:
                         help="Crossing edge window in seconds.")
     parser.add_argument("--crossing-window-max", type=int, default=200,
                         help="Max edge window in points.")
+    parser.add_argument("--crossing-expand-mode", default="fixed",
+                        choices=["fixed", "ratio"],
+                        help="How to expand crossing search windows when no crossings are found.")
+    parser.add_argument("--crossing-expand-k", type=float, default=1.0,
+                        help="Scale factor for ratio-based crossing window expansion.")
     parser.add_argument("--crossing-shape-window-frac", type=float, default=0.2,
                         help="Shape window fraction for crossing context.")
     parser.add_argument("--crossing-shape-window-min", type=int, default=3,
