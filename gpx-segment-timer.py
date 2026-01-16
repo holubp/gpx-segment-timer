@@ -1707,6 +1707,11 @@ def main() -> None:
                     else:
                         edge_window = max(30, int(0.1 * resample_count))
                     edge_window = min(args.crossing_window_max, edge_window)
+                    endpoint_start_pts = _endpoint_window_pts_from_m(rec_cum_dists, start_idx, args.endpoint_window_start)
+                    endpoint_end_pts = _endpoint_window_pts_from_m(rec_cum_dists, end_idx - 1, args.endpoint_window_end)
+                    expanded_start_window = min(args.crossing_window_max, max(edge_window, endpoint_start_pts))
+                    expanded_end_window = min(args.crossing_window_max, max(edge_window, endpoint_end_pts))
+
                     s_lo = max(0, start_idx - edge_window)
                     s_hi = min(len(recorded_points) - 1, start_idx + edge_window)
                     e_lo = max(0, end_idx - edge_window)
@@ -1719,6 +1724,30 @@ def main() -> None:
                         recorded_points, ref_start_coords, start_normal, s_lo, s_hi, start_lat_scale, line_half_len)
                     end_crossings = find_line_crossings(
                         recorded_points, ref_end_coords, end_normal, e_lo, e_hi, end_lat_scale, line_half_len)
+
+                    if not start_crossings and expanded_start_window > edge_window:
+                        s_lo2 = max(0, start_idx - expanded_start_window)
+                        s_hi2 = min(len(recorded_points) - 1, start_idx + expanded_start_window)
+                        start_cross = find_line_crossing(
+                            recorded_points, ref_start_coords, start_normal, s_lo2, s_hi2, start_lat_scale, False, line_half_len)
+                        start_crossings = find_line_crossings(
+                            recorded_points, ref_start_coords, start_normal, s_lo2, s_hi2, start_lat_scale, line_half_len)
+                        if args.verbose:
+                            logging.info(
+                                "Expanded start crossing window for '%s' from %d to %d points.",
+                                seg_filename, edge_window, expanded_start_window)
+
+                    if not end_crossings and expanded_end_window > edge_window:
+                        e_lo2 = max(0, end_idx - expanded_end_window)
+                        e_hi2 = min(len(recorded_points) - 1, end_idx + expanded_end_window)
+                        end_cross = find_line_crossing(
+                            recorded_points, ref_end_coords, end_normal, e_lo2, e_hi2, end_lat_scale, True, line_half_len)
+                        end_crossings = find_line_crossings(
+                            recorded_points, ref_end_coords, end_normal, e_lo2, e_hi2, end_lat_scale, line_half_len)
+                        if args.verbose:
+                            logging.info(
+                                "Expanded end crossing window for '%s' from %d to %d points.",
+                                seg_filename, edge_window, expanded_end_window)
 
                     def end_crossings_for_start(s_idx: int) -> List[Dict[str, Any]]:
                         extra = max(args.gps_error_m * 4.0, ref_distance * 0.02)
