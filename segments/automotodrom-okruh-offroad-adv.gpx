@@ -3,11 +3,9 @@
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
   <metadata>
-    <time>2025-04-08T09:58:18.696135100Z</time>
+    <time>2026-01-16T12:15:59.771766100Z</time>
     <bounds minlat="49.2026285" minlon="16.4514235" maxlat="49.2059538" maxlon="16.4631562"/>
   </metadata>
-  <wpt lat="49.20286069999998" lon="16.4571751">
-  </wpt>
   <trk>
     <trkseg>
       <trkpt lat="49.20445839999999" lon="16.4587079">
@@ -40,19 +38,9 @@
       </trkpt>
       <trkpt lat="49.203917499999996" lon="16.4579406">
       </trkpt>
-      <trkpt lat="49.20390609999998" lon="16.4579661">
+      <trkpt lat="49.20387364036515" lon="16.457978186309337">
       </trkpt>
-      <trkpt lat="49.20389639999999" lon="16.4580962">
-      </trkpt>
-      <trkpt lat="49.203880600000005" lon="16.4581485">
-      </trkpt>
-      <trkpt lat="49.20376939999999" lon="16.4581847">
-      </trkpt>
-      <trkpt lat="49.20369929999997" lon="16.4581887">
-      </trkpt>
-      <trkpt lat="49.203650199999984" lon="16.4581525">
-      </trkpt>
-      <trkpt lat="49.203620399999984" lon="16.4580935">
+      <trkpt lat="49.20367561047913" lon="16.458031830489638">
       </trkpt>
       <trkpt lat="49.20358449999999" lon="16.4580023">
       </trkpt>
