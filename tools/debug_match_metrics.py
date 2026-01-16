@@ -5,6 +5,7 @@ Debug tool for analyzing exported match GPX files against reference segments.
 from __future__ import annotations
 
 import argparse
+import bisect
 import importlib.util
 import os
 import re
@@ -167,6 +168,23 @@ def _compute_metrics(mod: Any,
                      resample_override: Optional[int] = None,
                      crossing_edge_window_pts_override: Optional[int] = None,
                      crossing_L_override: Optional[int] = None) -> Dict[str, Any]:
+    def endpoint_window_pts_from_m(points: List[Dict[str, Any]], idx: int, window_m: float) -> int:
+        if window_m <= 0 or not points:
+            return 1
+        rec_cum = [0.0]
+        for i in range(1, len(points)):
+            prev = points[i - 1]
+            curr = points[i]
+            rec_cum.append(rec_cum[-1] + mod.haversine_distance(
+                (prev["lat"], prev["lon"]), (curr["lat"], curr["lon"])
+            ))
+        idx = max(0, min(idx, len(rec_cum) - 1))
+        lower = rec_cum[idx] - window_m
+        upper = rec_cum[idx] + window_m
+        left = bisect.bisect_left(rec_cum, lower, 0, idx + 1)
+        right = bisect.bisect_right(rec_cum, upper, idx, len(rec_cum))
+        return max(1, idx - left, right - idx)
+
     ref_distance = mod.compute_total_distance(ref_points)
     match_distance = mod.compute_total_distance(match_points)
     resample_count = args.resample_count
@@ -206,9 +224,28 @@ def _compute_metrics(mod: Any,
         edge_window_pts = max(1, int(round(0.1 * resample_count)))
     edge_window_pts = min(args.crossing_window_max, edge_window_pts)
 
+    endpoint_start_pts = endpoint_window_pts_from_m(match_points, 0, args.endpoint_window_start)
+    endpoint_end_pts = endpoint_window_pts_from_m(match_points, len(match_points) - 1, args.endpoint_window_end)
+    expanded_start_window = min(args.crossing_window_max, max(edge_window_pts, endpoint_start_pts))
+    expanded_end_window = min(args.crossing_window_max, max(edge_window_pts, endpoint_end_pts))
+
     start_cross, end_cross, start_crossings, end_crossings = _compute_crossings(
         mod, match_points, ref_points, edge_window_pts, args.line_length_m
     )
+    if not start_crossings and expanded_start_window > edge_window_pts:
+        start_cross2, _end_cross2, start_crossings2, _end_crossings2 = _compute_crossings(
+            mod, match_points, ref_points, expanded_start_window, args.line_length_m
+        )
+        if start_crossings2:
+            start_cross = start_cross2
+            start_crossings = start_crossings2
+    if not end_crossings and expanded_end_window > edge_window_pts:
+        _start_cross2, end_cross2, _start_crossings2, end_crossings2 = _compute_crossings(
+            mod, match_points, ref_points, expanded_end_window, args.line_length_m
+        )
+        if end_crossings2:
+            end_cross = end_cross2
+            end_crossings = end_crossings2
 
     ref_start = (ref_points[0]["lat"], ref_points[0]["lon"]) if ref_points else (0.0, 0.0)
     ref_end = (ref_points[-1]["lat"], ref_points[-1]["lon"]) if ref_points else (0.0, 0.0)
@@ -259,6 +296,8 @@ def _compute_metrics(mod: Any,
         "dtw_window_max_avg": dtw_window_max_avg,
         "resample_count": resample_count,
         "edge_window_pts": edge_window_pts,
+        "expanded_start_window_pts": expanded_start_window,
+        "expanded_end_window_pts": expanded_end_window,
         "start_cross": start_cross,
         "end_cross": end_cross,
         "start_crossings": start_crossings,
@@ -293,6 +332,8 @@ def _print_metrics(label: str, metrics: Dict[str, Any]) -> None:
         print(f"  dtw_window_max_avg={metrics['dtw_window_max_avg']:.3f}")
     print(f"  resample_count={metrics['resample_count']}")
     print(f"  crossing_edge_window_pts={metrics['edge_window_pts']}")
+    print(f"  crossing_expanded_start_window_pts={metrics['expanded_start_window_pts']}")
+    print(f"  crossing_expanded_end_window_pts={metrics['expanded_end_window_pts']}")
     print(f"  start_cross={_format_cross(metrics['start_cross'])}")
     print(f"  end_cross={_format_cross(metrics['end_cross'])}")
     print(f"  start_crossings={len(metrics['start_crossings'])} end_crossings={len(metrics['end_crossings'])}")
@@ -380,6 +421,8 @@ def _apply_log_config(args: argparse.Namespace, config: Dict[str, str]) -> None:
         "crossing_window_max": "crossing_window_max",
         "crossing_shape_window_frac": "crossing_shape_window_frac",
         "crossing_shape_window_min": "crossing_shape_window_min",
+        "endpoint_window_start": "endpoint_window_start",
+        "endpoint_window_end": "endpoint_window_end",
     }
     for key, attr in mapping.items():
         if key not in config or not hasattr(args, attr):
@@ -501,6 +544,10 @@ def main() -> None:
                         help="Shape window fraction for crossing context.")
     parser.add_argument("--crossing-shape-window-min", type=int, default=3,
                         help="Minimum shape window for crossings.")
+    parser.add_argument("--endpoint-window-start", type=float, default=10.0,
+                        help="Endpoint refinement window for the start in meters.")
+    parser.add_argument("--endpoint-window-end", type=float, default=10.0,
+                        help="Endpoint refinement window for the end in meters.")
     args = parser.parse_args()
 
     mod = _load_main_module()
