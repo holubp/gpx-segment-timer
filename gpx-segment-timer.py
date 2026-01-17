@@ -420,6 +420,14 @@ def apply_matching_preset(args: argparse.Namespace) -> None:
             "dtw_window_m": 30.0,
             "dtw_window_max_avg": 15.0,
         },
+        "loosest": {
+            "strict_envelope_window_m": 30.0,
+            "strict_envelope_off_pct": 0.2,
+            "envelope_max_m": 50.0,
+            "dtw_window_m": 30.0,
+            "dtw_window_max_avg": 25.0,
+            "gps_error_m": 24.0,
+        },
     }
     if args.matching_preset == "none":
         return
@@ -436,6 +444,9 @@ def apply_matching_preset(args: argparse.Namespace) -> None:
         args.dtw_window_m = preset["dtw_window_m"]
     if args.dtw_window_max_avg is None:
         args.dtw_window_max_avg = preset["dtw_window_max_avg"]
+    if "gps_error_m" in preset:
+        if args.gps_error_m is None or (args.matching_preset == "loosest" and args.gps_error_m == 12.0):
+            args.gps_error_m = preset["gps_error_m"]
 
 def find_line_crossing(recorded_points: List[Dict[str, Any]],
                        line_anchor: Tuple[float, float],
@@ -1410,8 +1421,8 @@ def main() -> None:
                         help="Output file path (required for CSV and XLSX outputs).")
     parser.add_argument("--candidate-margin", type=float, default=0.2,
                         help="Allowed variation (fraction) in candidate segment distance relative to reference.")
-    parser.add_argument("--matching-preset", choices=["standard", "tight", "loose", "none"], default="standard",
-                        help="Preset for strict envelope and DTW window defaults (standard/tight/loose) or none.")
+    parser.add_argument("--matching-preset", choices=["standard", "tight", "loose", "loosest", "none"], default="standard",
+                        help="Preset for strict envelope/DTW defaults (standard/tight/loose/loosest) or none.")
     parser.add_argument("--candidate-endpoint-margin-m", type=float, default=-1.0,
                         help="Start/end bbox margin in meters for candidate selection; negative uses --gps-error-m.")
     parser.add_argument("--envelope-max-m", type=float, default=None,

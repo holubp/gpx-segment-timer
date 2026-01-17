@@ -52,45 +52,79 @@ pip install gpxpy fastdtw openpyxl
 
 ---
 
-## Command Line Options
+## Matching Presets (recommended first)
+
+Presets set defaults for strict envelope + DTW sliding window parameters. Any explicit flag overrides the preset value. Default preset is `standard`.
+
+Preset summary:
+
+| Parameter | `tight` | `standard` | `loose` | `loosest` |
+|-----------|---------|------------|---------|-----------|
+| `strict-envelope-window-m` | 30.0 | 30.0 | 30.0 | 30.0 |
+| `strict-envelope-off-pct` | 0.2 | 0.2 | 0.2 | 0.2 |
+| `envelope-max-m` | 2.0 | 5.0 | 10.0 | 50.0 |
+| `dtw-window-m` | 30.0 | 30.0 | 30.0 | 30.0 |
+| `dtw-window-max-avg` | 1.5 | 5.0 | 15.0 | 25.0 |
+| `gps-error-m` | 12.0 | 12.0 | 12.0 | 24.0 |
+
+Preset intent:
+- **`tight`**: packed tracks with similar shapes (e.g., Jinacovice).
+- **`standard`**: general-purpose default.
+- **`loose`**: noisy/forested tracks; allows more drift.
+- **`loosest`**: extreme GPS drift; consider enabling x-track gates (`--prefilter-xtrack-p95-m` or `--final-xtrack-p95-m`).
+- **`none`**: skip preset defaults; use explicit flags or legacy defaults.
+
+Examples:
+
+```
+./gpx-segment-timer.py -v -f segments -r example.gpx --matching-preset tight
+./gpx-segment-timer.py -v -f segments -r example.gpx --matching-preset loose
+```
+
+---
+
+## Advanced Options
 
 ### Input / Output
 
 | Option | Description |
 |--------|-------------|
-| `-r, --recorded` | Path to recorded GPX file. |
-| `-f, --reference-folder` | Folder with reference segment GPX files. |
-| `-o, --output-mode` | `stdout` (default), `csv`, or `xlsx`. |
-| `-O, --output-file` | Output file path for CSV/XLSX. |
-| `--export-gpx` | Export matched segments as GPX. |
-| `--export-gpx-file` | Base name for exported GPX files. |
-| `--dump-candidates-gpx` | Dump bbox-filtered candidates with placeholders `{ref}`, `{run}`, `{rs}`, `{re}`, `{n}`. |
-| `--group-by-segment` | Group output by segment name; default output is sorted by start index. |
+| `-r, --recorded` | Path to recorded GPX file (required). |
+| `-f, --reference-folder` | Folder with reference segment GPX files (required). |
+| `-o, --output-mode` | Output format: `stdout` (default), `csv`, or `xlsx`. |
+| `-O, --output-file` | Output file path for CSV/XLSX (default: unset). |
+| `--export-gpx` | Export matched segments as GPX (default: off). |
+| `--export-gpx-file` | Base name for exported GPX files (default: `matched_segments.gpx`). |
+| `--dump-candidates-gpx` | Dump bbox-filtered candidates with placeholders `{ref}`, `{run}`, `{rs}`, `{re}`, `{n}` (default: off). |
+| `--group-by-segment` | Group output by segment name (default: off; default output sorted by start index). |
 
 ### Matching / Refinement
 
 | Option | Description |
 |--------|-------------|
 | `--candidate-margin` | Relative distance tolerance for candidates (default `0.2`). |
-| `--matching-preset` | Preset defaults for strict envelope + DTW window (`standard`, `tight`, `loose`, `none`; default `standard`). |
-| `--candidate-endpoint-margin-m` | Start/end bbox margin for candidate selection (meters); negative uses `--gps-error-m`. |
-| `--envelope-max-m` | Max distance from reference polyline for envelope prefilter; negative uses `--gps-error-m`. |
+| `--matching-preset` | Preset defaults for strict envelope + DTW window (`standard`, `tight`, `loose`, `loosest`, `none`; default `standard`). |
+| `--candidate-endpoint-margin-m` | Start/end bbox margin for candidate selection (meters); negative uses `--gps-error-m` (default `-1.0`). |
+| `--envelope-max-m` | Max distance from reference polyline for envelope prefilter; negative uses `--gps-error-m` (default: preset; standard `5.0`). |
 | `--envelope-allow-off` | Allowed off-envelope samples per meters: `<points> <meters>` (default `2 100`). |
-| `--envelope-sample-max` | Max number of samples per candidate for envelope prefilter; `0` uses all points. |
-| `--strict-envelope-window-m` | Sliding strict envelope window length in meters; negative disables. |
-| `--strict-envelope-off-pct` | Allowed off-envelope percentage within each strict window; `0` disables. |
-| `--prefilter-xtrack-p95-m` | Enable x-track p95 prefilter (meters); negative disables. |
-| `--prefilter-xtrack-samples` | Sample count for x-track p95 prefilter. |
-| `--allow-length-mismatch` | Allow candidates outside length window. |
+| `--envelope-sample-max` | Max number of samples per candidate for envelope prefilter; `0` uses all points (default `0`). |
+| `--strict-envelope-window-m` | Sliding strict envelope window length in meters; negative disables (default: preset; standard `30.0`). |
+| `--strict-envelope-off-pct` | Allowed off-envelope percentage within each strict window; `0` disables (default: preset; standard `0.2`). |
+| `--prefilter-xtrack-p95-m` | Enable x-track p95 prefilter (meters); negative disables (default `-1.0`). |
+| `--prefilter-xtrack-samples` | Sample count for x-track p95 prefilter (default `80`). |
+| `--final-xtrack-p95-m` | Reject final matches if x-track p95 exceeds this (meters); negative disables (default `-1.0`). |
+| `--final-xtrack-max-m` | Reject final matches if x-track max exceeds this (meters); negative disables (default `-1.0`). |
+| `--allow-length-mismatch` | Allow candidates outside length window (default: off). |
+| `--min-length-ratio` | Reject matches shorter than this fraction of reference length; `0` disables (default `0.8`). |
 | `--dtw-threshold` | Max avg DTW cost (default `50`). |
-| `--dtw-window-m` | Sliding DTW window length in meters; negative disables. |
-| `--dtw-window-max-avg` | Reject candidates whose max avg DTW within the window exceeds this; negative disables. |
-| `--dtw-penalty` | DTW penalty: `linear`, `quadratic`, `huber`. |
-| `--dtw-penalty-scale-m` | Scale for quadratic DTW penalty (meters). |
-| `--dtw-penalty-huber-k` | Huber k parameter for DTW penalty (meters). |
-| `--shape-mode` | `step_vectors`, `heading`, `centered`, or `auto`. |
-| `--gps-error-m` | GPS error estimate in meters (default `12`). |
-| `--target-spacing-m` | Target meters between resampled points (default `8`). |
+| `--dtw-window-m` | Sliding DTW window length in meters; negative disables (default: preset; standard `30.0`). |
+| `--dtw-window-max-avg` | Reject candidates whose max avg DTW within the window exceeds this; negative disables (default: preset; standard `5.0`). |
+| `--dtw-penalty` | DTW penalty: `linear`, `quadratic`, `huber` (default `linear`). |
+| `--dtw-penalty-scale-m` | Scale for quadratic DTW penalty (meters, default `10.0`). |
+| `--dtw-penalty-huber-k` | Huber k parameter for DTW penalty (meters, default `5.0`). |
+| `--shape-mode` | `step_vectors`, `heading`, `centered`, or `auto` (default `step_vectors`). |
+| `--gps-error-m` | GPS error estimate in meters (default `12.0`; preset `loosest` sets `24.0` unless overridden). |
+| `--target-spacing-m` | Target meters between resampled points (default `8.0`; `<=0` disables). |
 | `--resample-max` | Max resample count when using target spacing (default `400`). |
 | `--resample-count` | Fixed resample count when target spacing is not used (default `200`, ignored when `--target-spacing-m > 0`). |
 | `--min-gap` | Minimum points to skip after a match (default `1`). |
@@ -103,19 +137,19 @@ pip install gpxpy fastdtw openpyxl
 | `--endpoint-window-start` | Start endpoint sliding window in meters (default `10.0`, converted to points using cumulative distance). |
 | `--endpoint-window-end` | End endpoint sliding window in meters (default `10.0`, converted to points using cumulative distance). |
 | `--endpoint-spatial-weight` | Spatial weight in endpoint refinement (default `0.25`). |
-| `--no-refinement` | Disable refinement steps. |
-| `--skip-endpoint-checks` | Keep matches even if endpoint diffs exceed `--bbox-margin`. |
+| `--no-refinement` | Disable refinement steps (default: off). |
+| `--skip-endpoint-checks` | Keep matches even if endpoint diffs exceed `--bbox-margin` (default: off). |
 
 ### Start/Finish Crossing Logic
 
 | Option | Description |
 |--------|-------------|
 | `--line-length-m` | Start/finish line total length in meters (default `8.0`). |
-| `--crossing-endpoint-weight` | Endpoint proximity weight when selecting crossings. |
-| `--crossing-shape-weight` | Shape weight when selecting crossings. |
+| `--crossing-endpoint-weight` | Endpoint proximity weight when selecting crossings (default `1.0`). |
+| `--crossing-shape-weight` | Shape weight when selecting crossings (default `1.0`). |
 | `--crossing-shape-window-frac` | Local shape window fraction of resample count (default `0.2`). |
 | `--crossing-shape-window-min` | Minimum window size for local crossing shape matching (default `3`). |
-| `--crossing-length-weight` | Length weight for crossing selection (negative = auto). |
+| `--crossing-length-weight` | Length weight for crossing selection (negative = auto, default `-1.0`). |
 | `--crossing-window-max` | Max crossing search expansion window (default `200`). |
 | `--crossing-edge-window-s` | Start/end crossing search window in seconds (default `1.0`, uses median sampling rate). |
 | `--crossing-expand-mode` | Crossing search expansion mode when no crossings are found (`fixed` or `ratio`, default `ratio`). |
@@ -125,7 +159,7 @@ pip install gpxpy fastdtw openpyxl
 
 | Option | Description |
 |--------|-------------|
-| `--single-passage` | Enforce single pass through start/end buffers. |
+| `--single-passage` | Enforce single pass through start/end buffers (default: off). |
 | `--passage-radius` | Buffer radius in meters (default `30`). |
 | `--passage-edge-frac` | Fraction of segment length for passage checks (default `0.10`). |
 
@@ -133,8 +167,8 @@ pip install gpxpy fastdtw openpyxl
 
 | Option | Description |
 |--------|-------------|
-| `-v, --verbose` | INFO logs. |
-| `-d, --debug` | DEBUG logs. |
+| `-v, --verbose` | INFO logs (default: off). |
+| `-d, --debug` | DEBUG logs (default: off). |
 
 ---
 
@@ -205,20 +239,7 @@ pip install gpxpy fastdtw openpyxl
 - Use smaller values for kink-heavy segments that intersect the line multiple times.
 
 ### Strict Envelope + DTW Window Presets
-- **`--matching-preset standard`** (default) uses 30m window, 0.2 off-pct, 5.0m envelope, 30m DTW window, 5.0 max-avg.
-- **`--matching-preset tight`** is tuned for tightly packed tracks (e.g., Jinacovice); it uses a smaller envelope (2.0m) and stricter DTW window (1.5 max-avg).
-- **`--matching-preset loose`** is for noisy/forested tracks; it allows a larger envelope (10.0m) and higher DTW window max-avg (15.0).
-- **`--matching-preset none`** disables preset defaults so only explicit flags or legacy defaults apply.
-
-Preset summary:
-
-| Parameter | `tight` | `standard` | `loose` |
-|-----------|---------|------------|---------|
-| `strict-envelope-window-m` | 30.0 | 30.0 | 30.0 |
-| `strict-envelope-off-pct` | 0.2 | 0.2 | 0.2 |
-| `envelope-max-m` | 2.0 | 5.0 | 10.0 |
-| `dtw-window-m` | 30.0 | 30.0 | 30.0 |
-| `dtw-window-max-avg` | 1.5 | 5.0 | 15.0 |
+See the **Matching Presets** section for defaults and guidance.
 
 ### Strict Envelope
 - **`--strict-envelope-window-m`** controls the sliding window length used to enforce local envelope adherence.
