@@ -879,7 +879,8 @@ def find_all_segment_matches(recorded_points: List[Dict[str, Any]],
                              prefilter_xtrack_p95_m: float = -1.0,
                              prefilter_xtrack_samples: int = 80,
                              dump_pattern: Optional[str] = None,
-                             ref_name: Optional[str] = None) -> List[Tuple[int, int, float, int, int]]:
+                             ref_name: Optional[str] = None,
+                             rec_cum_dists: Optional[List[float]] = None) -> List[Tuple[int, int, float, int, int]]:
     """
     Three-bbox candidate search with logging and pre-counting of DTW candidates.
     See docstring in patch description for details.
@@ -915,15 +916,16 @@ def find_all_segment_matches(recorded_points: List[Dict[str, Any]],
     bbox_end   = expand_bounding_box((ref_end['lat'],   ref_end['lat'],   ref_end['lon'],   ref_end['lon']),   margin_m=candidate_endpoint_margin_m)
 
     # Precompute cumulative distances and "outside overall bbox" prefix sum
-    rec_cum_dists: List[float] = [0.0]
+    if rec_cum_dists is None or len(rec_cum_dists) != len(recorded_points):
+        rec_cum_dists = [0.0]
+        for i in range(1, len(recorded_points)):
+            d = haversine_distance((recorded_points[i-1]['lat'], recorded_points[i-1]['lon']),
+                                   (recorded_points[i]['lat'], recorded_points[i]['lon']))
+            rec_cum_dists.append(rec_cum_dists[-1] + d)
     outside = [0] * len(recorded_points)
     for i in range(len(recorded_points)):
         if not point_in_bbox(recorded_points[i], bbox_overall):
             outside[i] = 1
-        if i > 0:
-            d = haversine_distance((recorded_points[i-1]['lat'], recorded_points[i-1]['lon']),
-                                   (recorded_points[i]['lat'], recorded_points[i]['lon']))
-            rec_cum_dists.append(rec_cum_dists[-1] + d)
     # prefix sum of "outside" to quickly check segments
     pref_out = [0] * (len(recorded_points) + 1)
     for i, v in enumerate(outside, start=1):
@@ -934,8 +936,11 @@ def find_all_segment_matches(recorded_points: List[Dict[str, Any]],
     pref_off_all: List[int] = [0] * (len(recorded_points) + 1)
     if envelope_max_m > 0 or prefilter_xtrack_p95_m > 0 or strict_envelope_window_m > 0:
         off_all: List[int] = []
-        for i, pt in enumerate(recorded_points):
-            px, py = _point_to_xy(pt["lat"], pt["lon"], ref_origin, lat_scale_ref)
+        rec_xy = [
+            _point_to_xy(pt["lat"], pt["lon"], ref_origin, lat_scale_ref)
+            for pt in recorded_points
+        ]
+        for i, (px, py) in enumerate(rec_xy):
             dist = point_to_polyline_distance_xy(px, py, ref_poly_xy)
             dist_all.append(dist)
             off_all.append(1 if envelope_max_m > 0 and dist > envelope_max_m else 0)
@@ -993,6 +998,7 @@ def find_all_segment_matches(recorded_points: List[Dict[str, Any]],
     import bisect as _bis
 
     start_inside = [point_in_bbox(recorded_points[i], bbox_start) for i in range(n)]
+    end_inside = [point_in_bbox(recorded_points[i], bbox_end) for i in range(n)]
     # Log contiguous runs of start_inside == True
     runs = []
     run_s = None
@@ -1034,7 +1040,7 @@ def find_all_segment_matches(recorded_points: List[Dict[str, Any]],
 
             for e in range(e_lo, e_hi):
                 # end must be in end-bbox
-                if not point_in_bbox(recorded_points[e], bbox_end):
+                if not end_inside[e]:
                     continue
                 # All points between s..e must lie within overall bbox
                 outside_cnt = pref_out[e+1] - pref_out[s]
@@ -1624,7 +1630,8 @@ def main() -> None:
             prefilter_xtrack_p95_m=args.prefilter_xtrack_p95_m,
             prefilter_xtrack_samples=args.prefilter_xtrack_samples,
             dump_pattern=args.dump_candidates_gpx,
-            ref_name=seg_filename
+            ref_name=seg_filename,
+            rec_cum_dists=rec_cum_dists
         )
         if not matches:
             logging.info("No matching segments found for reference '%s'.", seg_filename)
