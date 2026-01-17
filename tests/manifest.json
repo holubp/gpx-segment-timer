@@ -1,0 +1,130 @@
+{
+  "cases": [
+    {
+      "id": "real_public_automotodrom",
+      "kind": "real_world",
+      "visibility": "public",
+      "name": "automotodrom",
+      "recorded": "tests/data/real_world/public/automotodrom/recorded.gpx",
+      "segments": "segments",
+      "args": [
+        "--matching-preset",
+        "loose",
+        "--export-gpx",
+        "--export-gpx-file",
+        "automotodrom-matching.gpx",
+        "--export-unmatched-gpx",
+        "--export-unmatched-gpx-file",
+        "automotodrom-nonmatching.gpx"
+      ],
+      "expected_dir": "tests/expected/real_world/public/automotodrom",
+      "expected_unmatched": "automotodrom-nonmatching.gpx",
+      "tolerances": {
+        "index": 5,
+        "distance_m": 5.0,
+        "time_s": 2.0,
+        "dtw_avg": 1.0,
+        "start_end_m": 5.0,
+        "gpx_distance_m": 5.0
+      },
+      "trace_compare": true
+    },
+    {
+      "id": "real_private_jinacovice",
+      "kind": "real_world",
+      "visibility": "private",
+      "name": "jinacovice",
+      "recorded": "tests/data/real_world/private/jinacovice/recorded.gpx",
+      "segments": "segments",
+      "args": [
+        "--matching-preset",
+        "standard",
+        "--export-gpx",
+        "--export-gpx-file",
+        "jinacovice-matching.gpx",
+        "--export-unmatched-gpx",
+        "--export-unmatched-gpx-file",
+        "jinacovice-nonmatching.gpx"
+      ],
+      "expected_dir": "tests/expected/real_world/private/jinacovice",
+      "expected_unmatched": "jinacovice-nonmatching.gpx",
+      "tolerances": {
+        "index": 5,
+        "distance_m": 5.0,
+        "time_s": 2.0,
+        "dtw_avg": 1.0,
+        "start_end_m": 5.0,
+        "gpx_distance_m": 5.0
+      },
+      "trace_compare": true
+    },
+    {
+      "id": "synthetic_match_noise",
+      "kind": "synthetic",
+      "visibility": "public",
+      "name": "match_noise",
+      "recorded": "tests/data/synthetic/match_noise/recorded.gpx",
+      "segments": "segments",
+      "args": [
+        "--matching-preset",
+        "standard"
+      ],
+      "expected_dir": "tests/expected/synthetic/match_noise",
+      "tolerances": {
+        "index": 5
+      },
+      "trace_compare": false
+    },
+    {
+      "id": "synthetic_match_linger",
+      "kind": "synthetic",
+      "visibility": "public",
+      "name": "match_linger",
+      "recorded": "tests/data/synthetic/match_linger/recorded.gpx",
+      "segments": "segments",
+      "args": [
+        "--matching-preset",
+        "standard"
+      ],
+      "expected_dir": "tests/expected/synthetic/match_linger",
+      "tolerances": {
+        "index": 5
+      },
+      "trace_compare": false
+    },
+    {
+      "id": "synthetic_match_detour",
+      "kind": "synthetic",
+      "visibility": "public",
+      "name": "match_detour",
+      "recorded": "tests/data/synthetic/match_detour/recorded.gpx",
+      "segments": "segments",
+      "args": [
+        "--matching-preset",
+        "standard"
+      ],
+      "expected_dir": "tests/expected/synthetic/match_detour",
+      "tolerances": {
+        "index": 5
+      },
+      "trace_compare": false
+    },
+    {
+      "id": "synthetic_nonmatch_shift",
+      "kind": "synthetic",
+      "visibility": "public",
+      "name": "nonmatch_shift",
+      "recorded": "tests/data/synthetic/nonmatch_shift/recorded.gpx",
+      "segments": "segments",
+      "args": [
+        "--matching-preset",
+        "standard"
+      ],
+      "expected_dir": "tests/expected/synthetic/nonmatch_shift",
+      "tolerances": {
+        "index": 5
+      },
+      "trace_compare": false
+    }
+  ]
+}

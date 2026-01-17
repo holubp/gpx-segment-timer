@@ -3,16 +3,20 @@
 ## Project Structure & Module Organization
 - `gpx-segment-timer.py` is the primary CLI script.
 - `segments/` holds reference GPX segment files used for matching.
-- `example.gpx` and `20250904_1852.gpx` are sample recorded tracks.
-  - `20250904_1852.gpx` or similarly named files should not be committed to the repo, even if locally present.
+- `example.gpx` is the public sample recorded track.
+- Private sample tracks (like `20250904_1852.gpx`) live under `tests/data/real_world/private/` and must not be committed.
 - Additional variants like `gpx-segment-timer_*` are experimental snapshots.
+- `tests/` contains the manifest-driven test framework (runner, fixtures, and generators).
 
 ## Build, Test, and Development Commands
 - `python3 gpx-segment-timer.py -r example.gpx -f segments` runs a basic match against bundled data.
 - `python3 gpx-segment-timer.py -r <track.gpx> -f segments --export-gpx` exports matched segments for inspection.
 - `python3 tools/debug_match_metrics.py <match.gpx> --ref-segment segments/<segment.gpx>` inspects metrics for an exported match GPX.
-- `python3 tests/tools/generate_synthetic_data.py` regenerates synthetic GPX fixtures and expected results.
-- `python3 tests/run_tests.py` runs the regression test manifest.
+- `python3 tests/run_tests.py` runs the manifest-driven regression suite.
+- `python3 tests/run_tests.py --suite public|private|synthetic` runs a subset of cases.
+- `python3 tests/run_tests.py --case <case-id>` runs one case.
+- `python3 tests/run_tests.py --update-expected` refreshes expected outputs from the current binary.
+- `python3 tests/tools/generate_synthetic_data.py --segments segments --output tests/data/synthetic --expected tests/expected/synthetic` generates synthetic fixtures.
 - `pip install gpxpy fastdtw openpyxl` installs required dependencies for GPX parsing, DTW, and XLSX output.
 
 ## Coding Style & Naming Conventions
@@ -82,21 +86,29 @@
   - Crossing search expansion defaults to ratio-based growth (`--crossing-expand-mode ratio`) with a hard cap (`--crossing-window-max`).
 
 ## Testing Guidelines
-- Use `tests/run_tests.py` to validate synthetic fixtures and baselines defined in `tests/test_manifest.json`.
-- Synthetic fixtures live in `tests/data/synthetic/` and must be generated from reference segments while covering real-world variability in recorded GPX (sampling jitter, noise, drift, short gaps).
-- Synthetic reference segments must include both simple and difficult scenarios (repeated laps, self-intersections), plus combinations of those.
-- Synthetic recorded tracks + synthetic references must cover cases where they should match (collocated), should not match despite colocation, and are not collocated at all.
-- Each synthetic test must include ground-truth expectations (segment occurrences + expected durations with tolerances).
+- The test framework is driven by `tests/manifest.json` and executed via `tests/run_tests.py`.
+- Data layout:
+  - Public real-world inputs: `tests/data/real_world/public/`.
+  - Private real-world inputs: `tests/data/real_world/private/` (gitignored).
+  - Expected outputs (public): `tests/expected/real_world/public/`.
+  - Expected outputs (private): `tests/expected/real_world/private/` (gitignored).
+  - Synthetic fixtures: `tests/data/synthetic/` + `tests/expected/synthetic/`.
+- Real-world tests:
+  - Run against recorded GPX + `segments/` with fixed CLI args.
+  - Compare stdout summary tables, exported match GPX files, exported unmatched GPX files, and normalized `-v` trace logs.
+  - Differences within tolerances are reported as “soft” mismatches; larger diffs are failures.
+- Synthetic tests:
+  - Generated from reference segments with controlled perturbations (noise, detours, lingering, start/end variations, envelope shifts).
+  - Expected matches are recorded in `expected.json`; comparisons allow index tolerances.
+- Use `--update-expected` to refresh baselines after intentional algorithm changes.
 - Keep the synthetic dataset count reasonable so the full test run remains practical after updates.
-- The bundled `example.gpx` + `segments/` baseline is a real-world example of a recorded track (example.gpx) and real segments
-- Real-world validation uses private GPX files stored outside GitHub (or under `tests/data/real_world/`) with expected results in `tests/expected/`.
-- Prepare a public real-world examples folder in GitHub (like `example.gpx` + `segments/`) based on publicly accessible, legal tracks.
 - When adjusting matching logic, update expected results and verify DTW thresholds (or other thresholds if other methods are introduced) and endpoint deviations remain reasonable.
 
 
 ## Data Privacy
 - Treat GPX files as sensitive location data; avoid committing personal tracks to the repository.
 - If sharing outputs, scrub filenames or coordinates as needed and prefer small, anonymized samples.
+- Private test fixtures must live under `tests/data/real_world/private/` and `tests/expected/real_world/private/` (gitignored).
 
 ## Release & Versioning
 - Major versions: redesigns or fundamental updates.

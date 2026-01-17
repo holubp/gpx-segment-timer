@@ -1,0 +1,306 @@
+2026-01-17 11:01:45,991 [INFO] Initial config:
+2026-01-17 11:01:45,991 [INFO]   allow_length_mismatch=False
+2026-01-17 11:01:45,991 [INFO]   anchor_beta1=1.0
+2026-01-17 11:01:45,991 [INFO]   anchor_beta2=1.0
+2026-01-17 11:01:45,991 [INFO]   bbox_margin=30
+2026-01-17 11:01:45,991 [INFO]   candidate_endpoint_margin_m=-1.0
+2026-01-17 11:01:45,991 [INFO]   candidate_margin=0.2
+2026-01-17 11:01:45,991 [INFO]   crossing_edge_window_s=1.0
+2026-01-17 11:01:45,991 [INFO]   crossing_endpoint_weight=1.0
+2026-01-17 11:01:45,992 [INFO]   crossing_expand_k=1.0
+2026-01-17 11:01:45,992 [INFO]   crossing_expand_mode=ratio
+2026-01-17 11:01:45,992 [INFO]   crossing_length_weight=-1.0
+2026-01-17 11:01:45,992 [INFO]   crossing_shape_weight=1.0
+2026-01-17 11:01:45,992 [INFO]   crossing_shape_window_frac=0.2
+2026-01-17 11:01:45,992 [INFO]   crossing_shape_window_min=3
+2026-01-17 11:01:45,992 [INFO]   crossing_window_max=200
+2026-01-17 11:01:45,992 [INFO]   debug=False
+2026-01-17 11:01:45,992 [INFO]   dtw_penalty=linear
+2026-01-17 11:01:45,992 [INFO]   dtw_penalty_huber_k=5.0
+2026-01-17 11:01:45,992 [INFO]   dtw_penalty_scale_m=10.0
+2026-01-17 11:01:45,992 [INFO]   dtw_threshold=50
+2026-01-17 11:01:45,992 [INFO]   dtw_window_m=30.0
+2026-01-17 11:01:45,992 [INFO]   dtw_window_max_avg=15.0
+2026-01-17 11:01:45,992 [INFO]   dump_candidates_gpx=None
+2026-01-17 11:01:45,992 [INFO]   endpoint_spatial_weight=0.25
+2026-01-17 11:01:45,992 [INFO]   endpoint_window_end=10.0
+2026-01-17 11:01:45,992 [INFO]   endpoint_window_start=10.0
+2026-01-17 11:01:45,992 [INFO]   envelope_allow_off=(2, 100.0)
+2026-01-17 11:01:45,992 [INFO]   envelope_max_m=10.0
+2026-01-17 11:01:45,992 [INFO]   envelope_sample_max=0
+2026-01-17 11:01:45,992 [INFO]   export_gpx=True
+2026-01-17 11:01:45,992 [INFO]   export_gpx_file=Adrom-matching.gpx
+2026-01-17 11:01:45,993 [INFO]   export_unmatched_gpx=True
+2026-01-17 11:01:45,993 [INFO]   export_unmatched_gpx_file=Adrom-nonmatching.gpx
+2026-01-17 11:01:45,993 [INFO]   final_xtrack_max_m=-1.0
+2026-01-17 11:01:45,993 [INFO]   final_xtrack_p95_m=-1.0
+2026-01-17 11:01:45,993 [INFO]   final_xtrack_samples=0
+2026-01-17 11:01:45,993 [INFO]   gps_error_m=12.0
+2026-01-17 11:01:45,993 [INFO]   group_by_segment=False
+2026-01-17 11:01:45,993 [INFO]   iterative_window_end=20
+2026-01-17 11:01:45,993 [INFO]   iterative_window_start=20
+2026-01-17 11:01:45,993 [INFO]   line_length_m=8.0
+2026-01-17 11:01:45,993 [INFO]   matching_preset=loose
+2026-01-17 11:01:45,993 [INFO]   min_gap=1
+2026-01-17 11:01:45,993 [INFO]   min_length_ratio=0.8
+2026-01-17 11:01:45,993 [INFO]   no_refinement=False
+2026-01-17 11:01:45,993 [INFO]   output_file=None
+2026-01-17 11:01:45,993 [INFO]   output_mode=stdout
+2026-01-17 11:01:45,993 [INFO]   passage_edge_frac=0.1
+2026-01-17 11:01:45,993 [INFO]   passage_radius=30.0
+2026-01-17 11:01:45,993 [INFO]   penalty_weight=2.0
+2026-01-17 11:01:45,993 [INFO]   prefilter_xtrack_max_m=-1.0
+2026-01-17 11:01:45,993 [INFO]   prefilter_xtrack_p95_m=-1.0
+2026-01-17 11:01:45,993 [INFO]   prefilter_xtrack_samples=80
+2026-01-17 11:01:45,993 [INFO]   recorded=example.gpx
+2026-01-17 11:01:45,993 [INFO]   reference_folder=segments
+2026-01-17 11:01:45,994 [INFO]   resample_count=200
+2026-01-17 11:01:45,994 [INFO]   resample_max=400
+2026-01-17 11:01:45,994 [INFO]   shape_mode=step_vectors
+2026-01-17 11:01:45,994 [INFO]   single_passage=False
+2026-01-17 11:01:45,994 [INFO]   skip_endpoint_checks=False
+2026-01-17 11:01:45,994 [INFO]   strict_envelope_off_pct=0.2
+2026-01-17 11:01:45,994 [INFO]   strict_envelope_window_m=30.0
+2026-01-17 11:01:45,994 [INFO]   target_spacing_m=8.0
+2026-01-17 11:01:45,994 [INFO]   verbose=True
+2026-01-17 11:01:45,994 [INFO] Loading recorded track: example.gpx
+2026-01-17 11:01:48,266 [INFO] Recorded GPX stats: 1 track(s), 10115 total points (track1=10115 pts in 1 segs)
+2026-01-17 11:01:50,586 [INFO] Loading reference segments from folder: segments
+2026-01-17 11:01:50,635 [INFO] Reference automotodrom-okruh-offroad-les.gpx GPX stats: 1 track(s), 246 total points (track1=246 pts in 1 segs)
+2026-01-17 11:01:50,803 [INFO] Reference automotodrom-okruh-offroad-adv.gpx GPX stats: 1 track(s), 720 total points (track1=720 pts in 1 segs)
+2026-01-17 11:01:51,056 [INFO] Reference automotodrom-okruh-offroad.gpx GPX stats: 1 track(s), 731 total points (track1=731 pts in 1 segs)
+2026-01-17 11:01:51,194 [INFO] Reference Jinacovice-vnejsi-dlouhy.gpx GPX stats: 1 track(s), 52 total points (track1=52 pts in 1 segs)
+2026-01-17 11:01:51,214 [INFO] Reference Jinacovice-vnejsi-kratky.gpx GPX stats: 1 track(s), 29 total points (track1=29 pts in 1 segs)
+2026-01-17 11:01:51,231 [INFO] Reference Jinacovice-vnejsi-stredni.gpx GPX stats: 1 track(s), 36 total points (track1=36 pts in 1 segs)
+2026-01-17 11:01:51,249 [INFO] Reference Jinacovice-vnitrni-kratky.gpx GPX stats: 1 track(s), 35 total points (track1=35 pts in 1 segs)
+2026-01-17 11:01:51,267 [INFO] Reference Jinacovice-vnitrni-stredni.gpx GPX stats: 1 track(s), 34 total points (track1=34 pts in 1 segs)
+2026-01-17 11:01:51,291 [INFO] Reference Jinacovice-vnitrni-kratky-2x.gpx GPX stats: 1 track(s), 69 total points (track1=69 pts in 1 segs)
+2026-01-17 11:01:51,369 [INFO] Recorded GPX median sampling interval: 1.000 s
+2026-01-17 11:01:51,370 [INFO] Post-load config:
+2026-01-17 11:01:51,370 [INFO]   allow_length_mismatch=False
+2026-01-17 11:01:51,370 [INFO]   anchor_beta1=1.0
+2026-01-17 11:01:51,370 [INFO]   anchor_beta2=1.0
+2026-01-17 11:01:51,370 [INFO]   bbox_margin=30
+2026-01-17 11:01:51,370 [INFO]   candidate_endpoint_margin_m=-1.0
+2026-01-17 11:01:51,370 [INFO]   candidate_margin=0.2
+2026-01-17 11:01:51,370 [INFO]   crossing_edge_window_s=1.0
+2026-01-17 11:01:51,370 [INFO]   crossing_endpoint_weight=1.0
+2026-01-17 11:01:51,370 [INFO]   crossing_expand_k=1.0
+2026-01-17 11:01:51,370 [INFO]   crossing_expand_mode=ratio
+2026-01-17 11:01:51,370 [INFO]   crossing_length_weight=-1.0
+2026-01-17 11:01:51,370 [INFO]   crossing_shape_weight=1.0
+2026-01-17 11:01:51,370 [INFO]   crossing_shape_window_frac=0.2
+2026-01-17 11:01:51,370 [INFO]   crossing_shape_window_min=3
+2026-01-17 11:01:51,370 [INFO]   crossing_window_max=200
+2026-01-17 11:01:51,370 [INFO]   debug=False
+2026-01-17 11:01:51,370 [INFO]   dtw_penalty=linear
+2026-01-17 11:01:51,371 [INFO]   dtw_penalty_huber_k=5.0
+2026-01-17 11:01:51,371 [INFO]   dtw_penalty_scale_m=10.0
+2026-01-17 11:01:51,371 [INFO]   dtw_threshold=50
+2026-01-17 11:01:51,371 [INFO]   dtw_window_m=30.0
+2026-01-17 11:01:51,371 [INFO]   dtw_window_max_avg=15.0
+2026-01-17 11:01:51,371 [INFO]   dump_candidates_gpx=None
+2026-01-17 11:01:51,371 [INFO]   endpoint_spatial_weight=0.25
+2026-01-17 11:01:51,371 [INFO]   endpoint_window_end=10.0
+2026-01-17 11:01:51,371 [INFO]   endpoint_window_start=10.0
+2026-01-17 11:01:51,371 [INFO]   envelope_allow_off=(2, 100.0)
+2026-01-17 11:01:51,371 [INFO]   envelope_max_m=10.0
+2026-01-17 11:01:51,371 [INFO]   envelope_sample_max=0
+2026-01-17 11:01:51,371 [INFO]   export_gpx=True
+2026-01-17 11:01:51,371 [INFO]   export_gpx_file=Adrom-matching.gpx
+2026-01-17 11:01:51,371 [INFO]   export_unmatched_gpx=True
+2026-01-17 11:01:51,371 [INFO]   export_unmatched_gpx_file=Adrom-nonmatching.gpx
+2026-01-17 11:01:51,371 [INFO]   final_xtrack_max_m=-1.0
+2026-01-17 11:01:51,371 [INFO]   final_xtrack_p95_m=-1.0
+2026-01-17 11:01:51,371 [INFO]   final_xtrack_samples=0
+2026-01-17 11:01:51,371 [INFO]   gps_error_m=12.0
+2026-01-17 11:01:51,371 [INFO]   group_by_segment=False
+2026-01-17 11:01:51,371 [INFO]   iterative_window_end=20
+2026-01-17 11:01:51,371 [INFO]   iterative_window_start=20
+2026-01-17 11:01:51,371 [INFO]   line_length_m=8.0
+2026-01-17 11:01:51,371 [INFO]   matching_preset=loose
+2026-01-17 11:01:51,371 [INFO]   median_sampling_s=1.0
+2026-01-17 11:01:51,372 [INFO]   min_gap=1
+2026-01-17 11:01:51,372 [INFO]   min_length_ratio=0.8
+2026-01-17 11:01:51,372 [INFO]   no_refinement=False
+2026-01-17 11:01:51,372 [INFO]   output_file=None
+2026-01-17 11:01:51,372 [INFO]   output_mode=stdout
+2026-01-17 11:01:51,372 [INFO]   passage_edge_frac=0.1
+2026-01-17 11:01:51,372 [INFO]   passage_radius=30.0
+2026-01-17 11:01:51,372 [INFO]   penalty_weight=2.0
+2026-01-17 11:01:51,372 [INFO]   prefilter_xtrack_max_m=-1.0
+2026-01-17 11:01:51,372 [INFO]   prefilter_xtrack_p95_m=-1.0
+2026-01-17 11:01:51,372 [INFO]   prefilter_xtrack_samples=80
+2026-01-17 11:01:51,372 [INFO]   recorded=example.gpx
+2026-01-17 11:01:51,372 [INFO]   reference_folder=segments
+2026-01-17 11:01:51,372 [INFO]   resample_count=200
+2026-01-17 11:01:51,372 [INFO]   resample_max=400
+2026-01-17 11:01:51,372 [INFO]   shape_mode=step_vectors
+2026-01-17 11:01:51,372 [INFO]   single_passage=False
+2026-01-17 11:01:51,372 [INFO]   skip_endpoint_checks=False
+2026-01-17 11:01:51,372 [INFO]   strict_envelope_off_pct=0.2
+2026-01-17 11:01:51,372 [INFO]   strict_envelope_window_m=30.0
+2026-01-17 11:01:51,372 [INFO]   target_spacing_m=8.0
+2026-01-17 11:01:51,372 [INFO]   verbose=True
+2026-01-17 11:01:51,372 [INFO] Processing reference segment: automotodrom-okruh-offroad-les.gpx
+2026-01-17 11:01:51,373 [INFO] Reference 'automotodrom-okruh-offroad-les.gpx' start: (49.204479, 16.459172), end: (49.204745, 16.461521), distance: 1546.04 m
+2026-01-17 11:01:54,624 [INFO] Envelope prefilter (strict window): window=30.0m envelope=10.00m allow_off_base=1 off_pct=0.200 bad_windows=8874
+2026-01-17 11:01:54,630 [INFO] Start-bbox runs (inclusive indices): [2178,2186], [7007,7018], [8977,8990]
+2026-01-17 11:01:54,631 [INFO] For start-run [2178,2186], end-index windows by distance: [2514,2659)
+2026-01-17 11:01:54,631 [INFO] Run [2178,2186]: 1237 distance-window pairs pre-filter; 153 candidates after bbox filters.
+2026-01-17 11:01:54,631 [INFO] Run [2178,2186]: strict envelope rejects: 0
+2026-01-17 11:01:54,631 [INFO] For start-run [7007,7018], end-index windows by distance: [7347,7479)
+2026-01-17 11:01:54,632 [INFO] Run [7007,7018]: 1488 distance-window pairs pre-filter; 60 candidates after bbox filters.
+2026-01-17 11:01:54,632 [INFO] Run [7007,7018]: strict envelope rejects: 0
+2026-01-17 11:01:54,632 [INFO] For start-run [8977,8990], end-index windows by distance: [9266,9379)
+2026-01-17 11:01:54,632 [INFO] Run [8977,8990]: 1499 distance-window pairs pre-filter; 42 candidates after bbox filters.
+2026-01-17 11:01:54,632 [INFO] Run [8977,8990]: strict envelope rejects: 0
+2026-01-17 11:01:54,632 [INFO] Total DTW candidates to assess: 255
+2026-01-17 11:01:54,632 [INFO] Strict envelope rejects total: 0
+2026-01-17 11:01:54,632 [INFO] DTW window rejects total: 0
+2026-01-17 11:02:00,596 [INFO] Run 0 winner: s=2184 e=2619 (exclusive), dtw_avg=1.10, dtw_window_max_avg=3.90
+2026-01-17 11:02:02,875 [INFO] Run 1 winner: s=7014 e=7438 (exclusive), dtw_avg=1.00, dtw_window_max_avg=3.79
+2026-01-17 11:02:04,514 [INFO] Run 2 winner: s=8990 e=9341 (exclusive), dtw_avg=0.99, dtw_window_max_avg=3.28
+2026-01-17 11:02:04,518 [INFO] Segment config:
+2026-01-17 11:02:04,518 [INFO]   bbox_margin=30
+2026-01-17 11:02:04,518 [INFO]   candidate_margin=0.2
+2026-01-17 11:02:04,518 [INFO]   crossing_L=38
+2026-01-17 11:02:04,518 [INFO]   crossing_edge_window_pts=1
+2026-01-17 11:02:04,519 [INFO]   line_length_m=8.0
+2026-01-17 11:02:04,519 [INFO]   ref_segment=automotodrom-okruh-offroad-les.gpx
+2026-01-17 11:02:04,519 [INFO]   resample_count=194
+2026-01-17 11:02:04,571 [INFO] Expanded start crossing window for 'automotodrom-okruh-offroad-les.gpx' from 1 to 200 points (mode=ratio).
+2026-01-17 11:02:04,572 [INFO] Expanded end crossing window for 'automotodrom-okruh-offroad-les.gpx' from 1 to 200 points (mode=ratio).
+2026-01-17 11:02:04,573 [INFO] Detected start for 'automotodrom-okruh-offroad-les.gpx' is 0.28 m from ref start (limit: 30.00 m).
+2026-01-17 11:02:04,573 [INFO] Detected end for 'automotodrom-okruh-offroad-les.gpx' is 1.75 m from ref end (limit: 30.00 m).
+2026-01-17 11:02:04,573 [INFO] Detected segment length for 'automotodrom-okruh-offroad-les.gpx' is 1604.02 m; Reference segment length is 1546.04 m.
+2026-01-17 11:02:04,573 [INFO] Segment timestamps for 'automotodrom-okruh-offroad-les.gpx': start_idx=2182 time=2025-04-04 12:59:29+00:00 end_idx=2620 time=2025-04-04 13:06:47+00:00 raw_delta=438.00
+2026-01-17 11:02:04,573 [INFO] Crossing timestamps for 'automotodrom-okruh-offroad-les.gpx': start=2025-04-04 12:59:29.817946+00:00 end=2025-04-04 13:06:46.013055+00:00 delta=436.20
+2026-01-17 11:02:04,573 [INFO] Start interpolation for 'automotodrom-okruh-offroad-les.gpx': idx0=2182 time0=2025-04-04 12:59:29+00:00 idx1=2183 time1=2025-04-04 12:59:30+00:00 interp_time=2025-04-04 12:59:29.817946+00:00
+2026-01-17 11:02:04,573 [INFO] Finish interpolation for 'automotodrom-okruh-offroad-les.gpx': idx0=2619 time0=2025-04-04 13:06:46+00:00 idx1=2620 time1=2025-04-04 13:06:47+00:00 interp_time=2025-04-04 13:06:46.013055+00:00
+2026-01-17 11:02:04,573 [INFO] Segment automotodrom-okruh-offroad-les.gpx: indices (2182, 2621), ref_dist=1546.04 m, detected_dist=1604.02 m, dtw_avg=1.10, time=0:07:16, start_diff=0.28 m, end_diff=1.75 m
+2026-01-17 11:02:04,588 [INFO] Exported matched segments to GPX file: Adrom-matching_automotodrom-okruh-offroad-les.gpx_match1.gpx
+2026-01-17 11:02:04,638 [INFO] Expanded start crossing window for 'automotodrom-okruh-offroad-les.gpx' from 1 to 200 points (mode=ratio).
+2026-01-17 11:02:04,639 [INFO] Expanded end crossing window for 'automotodrom-okruh-offroad-les.gpx' from 1 to 200 points (mode=ratio).
+2026-01-17 11:02:04,639 [INFO] Detected start for 'automotodrom-okruh-offroad-les.gpx' is 0.30 m from ref start (limit: 30.00 m).
+2026-01-17 11:02:04,640 [INFO] Detected end for 'automotodrom-okruh-offroad-les.gpx' is 0.74 m from ref end (limit: 30.00 m).
+2026-01-17 11:02:04,640 [INFO] Detected segment length for 'automotodrom-okruh-offroad-les.gpx' is 1598.08 m; Reference segment length is 1546.04 m.
+2026-01-17 11:02:04,640 [INFO] Segment timestamps for 'automotodrom-okruh-offroad-les.gpx': start_idx=7012 time=2025-04-04 14:19:59+00:00 end_idx=7440 time=2025-04-04 14:27:07+00:00 raw_delta=428.00
+2026-01-17 11:02:04,640 [INFO] Crossing timestamps for 'automotodrom-okruh-offroad-les.gpx': start=2025-04-04 14:19:59.628813+00:00 end=2025-04-04 14:27:06.535253+00:00 delta=426.91
+2026-01-17 11:02:04,640 [INFO] Start interpolation for 'automotodrom-okruh-offroad-les.gpx': idx0=7012 time0=2025-04-04 14:19:59+00:00 idx1=7013 time1=2025-04-04 14:20:00+00:00 interp_time=2025-04-04 14:19:59.628813+00:00
+2026-01-17 11:02:04,640 [INFO] Finish interpolation for 'automotodrom-okruh-offroad-les.gpx': idx0=7439 time0=2025-04-04 14:27:06+00:00 idx1=7440 time1=2025-04-04 14:27:07+00:00 interp_time=2025-04-04 14:27:06.535253+00:00
+2026-01-17 11:02:04,640 [INFO] Segment automotodrom-okruh-offroad-les.gpx: indices (7012, 7441), ref_dist=1546.04 m, detected_dist=1598.08 m, dtw_avg=1.00, time=0:07:06, start_diff=0.30 m, end_diff=0.74 m
+2026-01-17 11:02:04,654 [INFO] Exported matched segments to GPX file: Adrom-matching_automotodrom-okruh-offroad-les.gpx_match2.gpx
+2026-01-17 11:02:04,704 [INFO] Expanded start crossing window for 'automotodrom-okruh-offroad-les.gpx' from 1 to 200 points (mode=ratio).
+2026-01-17 11:02:04,705 [INFO] Expanded end crossing window for 'automotodrom-okruh-offroad-les.gpx' from 1 to 200 points (mode=ratio).
+2026-01-17 11:02:04,705 [INFO] Detected start for 'automotodrom-okruh-offroad-les.gpx' is 1.12 m from ref start (limit: 30.00 m).
+2026-01-17 11:02:04,706 [INFO] Detected end for 'automotodrom-okruh-offroad-les.gpx' is 1.54 m from ref end (limit: 30.00 m).
+2026-01-17 11:02:04,706 [INFO] Detected segment length for 'automotodrom-okruh-offroad-les.gpx' is 1581.21 m; Reference segment length is 1546.04 m.
+2026-01-17 11:02:04,706 [INFO] Segment timestamps for 'automotodrom-okruh-offroad-les.gpx': start_idx=8985 time=2025-04-04 14:52:52+00:00 end_idx=9341 time=2025-04-04 14:58:48+00:00 raw_delta=356.00
+2026-01-17 11:02:04,706 [INFO] Crossing timestamps for 'automotodrom-okruh-offroad-les.gpx': start=2025-04-04 14:52:52.911372+00:00 end=2025-04-04 14:58:47.444732+00:00 delta=354.53
+2026-01-17 11:02:04,706 [INFO] Start interpolation for 'automotodrom-okruh-offroad-les.gpx': idx0=8985 time0=2025-04-04 14:52:52+00:00 idx1=8986 time1=2025-04-04 14:52:53+00:00 interp_time=2025-04-04 14:52:52.911372+00:00
+2026-01-17 11:02:04,706 [INFO] Finish interpolation for 'automotodrom-okruh-offroad-les.gpx': idx0=9340 time0=2025-04-04 14:58:47+00:00 idx1=9341 time1=2025-04-04 14:58:48+00:00 interp_time=2025-04-04 14:58:47.444732+00:00
+2026-01-17 11:02:04,706 [INFO] Segment automotodrom-okruh-offroad-les.gpx: indices (8985, 9342), ref_dist=1546.04 m, detected_dist=1581.21 m, dtw_avg=0.99, time=0:05:54, start_diff=1.12 m, end_diff=1.54 m
+2026-01-17 11:02:04,719 [INFO] Exported matched segments to GPX file: Adrom-matching_automotodrom-okruh-offroad-les.gpx_match3.gpx
+2026-01-17 11:02:04,719 [INFO] Processing reference segment: automotodrom-okruh-offroad-adv.gpx
+2026-01-17 11:02:04,720 [INFO] Reference 'automotodrom-okruh-offroad-adv.gpx' start: (49.204458, 16.458708), end: (49.204733, 16.458846), distance: 4864.62 m
+2026-01-17 11:02:14,596 [INFO] Envelope prefilter (strict window): window=30.0m envelope=10.00m allow_off_base=1 off_pct=0.200 bad_windows=6346
+2026-01-17 11:02:14,602 [INFO] Start-bbox runs (inclusive indices): [1030,1036], [6385,6390], [8323,8329]
+2026-01-17 11:02:14,603 [INFO] For start-run [1030,1036], end-index windows by distance: [2339,2855)
+2026-01-17 11:02:14,603 [INFO] Run [1030,1036]: 3590 distance-window pairs pre-filter; 0 candidates after bbox filters.
+2026-01-17 11:02:14,603 [INFO] Run [1030,1036]: strict envelope rejects: 0
+2026-01-17 11:02:14,603 [INFO] Run [1030,1036] produced no valid end candidates; discarding this start-bbox excursion.
+2026-01-17 11:02:14,604 [INFO] For start-run [6385,6390], end-index windows by distance: [7298,8408)
+2026-01-17 11:02:14,604 [INFO] Run [6385,6390]: 6636 distance-window pairs pre-filter; 0 candidates after bbox filters.
+2026-01-17 11:02:14,604 [INFO] Run [6385,6390]: strict envelope rejects: 42
+2026-01-17 11:02:14,604 [INFO] Run [6385,6390] produced no valid end candidates; discarding this start-bbox excursion.
+2026-01-17 11:02:14,605 [INFO] For start-run [8323,8329], end-index windows by distance: [9230,9928)
+2026-01-17 11:02:14,605 [INFO] Run [8323,8329]: 4856 distance-window pairs pre-filter; 42 candidates after bbox filters.
+2026-01-17 11:02:14,605 [INFO] Run [8323,8329]: strict envelope rejects: 0
+2026-01-17 11:02:14,605 [INFO] Total DTW candidates to assess: 42
+2026-01-17 11:02:14,605 [INFO] Strict envelope rejects total: 42
+2026-01-17 11:02:14,605 [INFO] DTW window rejects total: 0
+2026-01-17 11:02:18,217 [INFO] Run 0 winner: s=8327 e=9432 (exclusive), dtw_avg=2.00, dtw_window_max_avg=14.85
+2026-01-17 11:02:18,217 [INFO] Run 0: DTW window rejects: 39
+2026-01-17 11:02:18,221 [INFO] Segment config:
+2026-01-17 11:02:18,221 [INFO]   bbox_margin=30
+2026-01-17 11:02:18,221 [INFO]   candidate_margin=0.2
+2026-01-17 11:02:18,221 [INFO]   crossing_L=80
+2026-01-17 11:02:18,221 [INFO]   crossing_edge_window_pts=1
+2026-01-17 11:02:18,221 [INFO]   line_length_m=8.0
+2026-01-17 11:02:18,221 [INFO]   ref_segment=automotodrom-okruh-offroad-adv.gpx
+2026-01-17 11:02:18,221 [INFO]   resample_count=400
+2026-01-17 11:02:18,329 [INFO] Expanded start crossing window for 'automotodrom-okruh-offroad-adv.gpx' from 1 to 200 points (mode=ratio).
+2026-01-17 11:02:18,331 [INFO] Expanded end crossing window for 'automotodrom-okruh-offroad-adv.gpx' from 1 to 200 points (mode=ratio).
+2026-01-17 11:02:18,331 [INFO] Detected start for 'automotodrom-okruh-offroad-adv.gpx' is 1.40 m from ref start (limit: 30.00 m).
+2026-01-17 11:02:18,331 [INFO] Detected end for 'automotodrom-okruh-offroad-adv.gpx' is 1.48 m from ref end (limit: 30.00 m).
+2026-01-17 11:02:18,331 [INFO] Detected segment length for 'automotodrom-okruh-offroad-adv.gpx' is 4990.58 m; Reference segment length is 4864.62 m.
+2026-01-17 11:02:18,331 [INFO] Segment timestamps for 'automotodrom-okruh-offroad-adv.gpx': start_idx=8325 time=2025-04-04 14:41:52+00:00 end_idx=9432 time=2025-04-04 15:00:19+00:00 raw_delta=1107.00
+2026-01-17 11:02:18,332 [INFO] Crossing timestamps for 'automotodrom-okruh-offroad-adv.gpx': start=2025-04-04 14:41:52.647473+00:00 end=2025-04-04 15:00:18.636306+00:00 delta=1105.99
+2026-01-17 11:02:18,332 [INFO] Start interpolation for 'automotodrom-okruh-offroad-adv.gpx': idx0=8325 time0=2025-04-04 14:41:52+00:00 idx1=8326 time1=2025-04-04 14:41:53+00:00 interp_time=2025-04-04 14:41:52.647473+00:00
+2026-01-17 11:02:18,332 [INFO] Finish interpolation for 'automotodrom-okruh-offroad-adv.gpx': idx0=9431 time0=2025-04-04 15:00:18+00:00 idx1=9432 time1=2025-04-04 15:00:19+00:00 interp_time=2025-04-04 15:00:18.636306+00:00
+2026-01-17 11:02:18,332 [INFO] Segment automotodrom-okruh-offroad-adv.gpx: indices (8325, 9433), ref_dist=4864.62 m, detected_dist=4990.58 m, dtw_avg=2.00, time=0:18:25, start_diff=1.40 m, end_diff=1.48 m
+2026-01-17 11:02:18,368 [INFO] Exported matched segments to GPX file: Adrom-matching_automotodrom-okruh-offroad-adv.gpx_match4.gpx
+2026-01-17 11:02:18,369 [INFO] Processing reference segment: automotodrom-okruh-offroad.gpx
+2026-01-17 11:02:18,370 [INFO] Reference 'automotodrom-okruh-offroad.gpx' start: (49.204458, 16.458708), end: (49.204733, 16.458846), distance: 4940.61 m
+2026-01-17 11:02:28,415 [INFO] Envelope prefilter (strict window): window=30.0m envelope=10.00m allow_off_base=1 off_pct=0.200 bad_windows=6374
+2026-01-17 11:02:28,422 [INFO] Start-bbox runs (inclusive indices): [1030,1036], [6385,6390], [8323,8329]
+2026-01-17 11:02:28,423 [INFO] For start-run [1030,1036], end-index windows by distance: [2358,2866)
+2026-01-17 11:02:28,423 [INFO] Run [1030,1036]: 3527 distance-window pairs pre-filter; 0 candidates after bbox filters.
+2026-01-17 11:02:28,423 [INFO] Run [1030,1036]: strict envelope rejects: 0
+2026-01-17 11:02:28,423 [INFO] Run [1030,1036] produced no valid end candidates; discarding this start-bbox excursion.
+2026-01-17 11:02:28,424 [INFO] For start-run [6385,6390], end-index windows by distance: [7317,8418)
+2026-01-17 11:02:28,424 [INFO] Run [6385,6390]: 6565 distance-window pairs pre-filter; 42 candidates after bbox filters.
+2026-01-17 11:02:28,424 [INFO] Run [6385,6390]: strict envelope rejects: 0
+2026-01-17 11:02:28,424 [INFO] For start-run [8323,8329], end-index windows by distance: [9246,9933)
+2026-01-17 11:02:28,424 [INFO] Run [8323,8329]: 4787 distance-window pairs pre-filter; 0 candidates after bbox filters.
+2026-01-17 11:02:28,424 [INFO] Run [8323,8329]: strict envelope rejects: 0
+2026-01-17 11:02:28,424 [INFO] Run [8323,8329] produced no valid end candidates; discarding this start-bbox excursion.
+2026-01-17 11:02:28,424 [INFO] Total DTW candidates to assess: 42
+2026-01-17 11:02:28,424 [INFO] Strict envelope rejects total: 0
+2026-01-17 11:02:28,424 [INFO] DTW window rejects total: 0
+2026-01-17 11:02:32,036 [INFO] Run 0 winner: s=6386 e=7544 (exclusive), dtw_avg=1.64, dtw_window_max_avg=7.06
+2026-01-17 11:02:32,040 [INFO] Segment config:
+2026-01-17 11:02:32,040 [INFO]   bbox_margin=30
+2026-01-17 11:02:32,040 [INFO]   candidate_margin=0.2
+2026-01-17 11:02:32,040 [INFO]   crossing_L=80
+2026-01-17 11:02:32,041 [INFO]   crossing_edge_window_pts=1
+2026-01-17 11:02:32,041 [INFO]   line_length_m=8.0
+2026-01-17 11:02:32,041 [INFO]   ref_segment=automotodrom-okruh-offroad.gpx
+2026-01-17 11:02:32,041 [INFO]   resample_count=400
+2026-01-17 11:02:32,142 [INFO] Expanded start crossing window for 'automotodrom-okruh-offroad.gpx' from 1 to 200 points (mode=ratio).
+2026-01-17 11:02:32,144 [INFO] Expanded end crossing window for 'automotodrom-okruh-offroad.gpx' from 1 to 200 points (mode=ratio).
+2026-01-17 11:02:32,144 [INFO] Detected start for 'automotodrom-okruh-offroad.gpx' is 1.72 m from ref start (limit: 30.00 m).
+2026-01-17 11:02:32,144 [INFO] Detected end for 'automotodrom-okruh-offroad.gpx' is 3.03 m from ref end (limit: 30.00 m).
+2026-01-17 11:02:32,144 [INFO] Detected segment length for 'automotodrom-okruh-offroad.gpx' is 5041.00 m; Reference segment length is 4940.61 m.
+2026-01-17 11:02:32,144 [INFO] Segment timestamps for 'automotodrom-okruh-offroad.gpx': start_idx=6386 time=2025-04-04 14:09:33+00:00 end_idx=7543 time=2025-04-04 14:28:50+00:00 raw_delta=1157.00
+2026-01-17 11:02:32,144 [INFO] Crossing timestamps for 'automotodrom-okruh-offroad.gpx': start=2025-04-04 14:09:33.498400+00:00 end=2025-04-04 14:28:49.238144+00:00 delta=1155.74
+2026-01-17 11:02:32,144 [INFO] Start interpolation for 'automotodrom-okruh-offroad.gpx': idx0=6386 time0=2025-04-04 14:09:33+00:00 idx1=6387 time1=2025-04-04 14:09:34+00:00 interp_time=2025-04-04 14:09:33.498400+00:00
+2026-01-17 11:02:32,144 [INFO] Finish interpolation for 'automotodrom-okruh-offroad.gpx': idx0=7542 time0=2025-04-04 14:28:49+00:00 idx1=7543 time1=2025-04-04 14:28:50+00:00 interp_time=2025-04-04 14:28:49.238144+00:00
+2026-01-17 11:02:32,145 [INFO] Segment automotodrom-okruh-offroad.gpx: indices (6386, 7544), ref_dist=4940.61 m, detected_dist=5041.00 m, dtw_avg=1.64, time=0:19:15, start_diff=1.72 m, end_diff=3.03 m
+2026-01-17 11:02:32,181 [INFO] Exported matched segments to GPX file: Adrom-matching_automotodrom-okruh-offroad.gpx_match5.gpx
+2026-01-17 11:02:32,181 [INFO] Processing reference segment: Jinacovice-vnejsi-dlouhy.gpx
+2026-01-17 11:02:32,182 [INFO] Reference 'Jinacovice-vnejsi-dlouhy.gpx' start: (49.281010, 16.523298), end: (49.280935, 16.523397), distance: 519.84 m
+2026-01-17 11:02:32,196 [INFO] Skipping reference Jinacovice-vnejsi-dlouhy.gpx: no overlap with recorded track rhomboid bounds.
+2026-01-17 11:02:32,197 [INFO] No matching segments found for reference 'Jinacovice-vnejsi-dlouhy.gpx'.
+2026-01-17 11:02:32,197 [INFO] Processing reference segment: Jinacovice-vnejsi-kratky.gpx
+2026-01-17 11:02:32,197 [INFO] Reference 'Jinacovice-vnejsi-kratky.gpx' start: (49.281010, 16.523298), end: (49.280938, 16.523395), distance: 296.09 m
+2026-01-17 11:02:32,211 [INFO] Skipping reference Jinacovice-vnejsi-kratky.gpx: no overlap with recorded track rhomboid bounds.
+2026-01-17 11:02:32,211 [INFO] No matching segments found for reference 'Jinacovice-vnejsi-kratky.gpx'.
+2026-01-17 11:02:32,211 [INFO] Processing reference segment: Jinacovice-vnejsi-stredni.gpx
+2026-01-17 11:02:32,211 [INFO] Reference 'Jinacovice-vnejsi-stredni.gpx' start: (49.281010, 16.523298), end: (49.280940, 16.523387), distance: 330.53 m
+2026-01-17 11:02:32,226 [INFO] Skipping reference Jinacovice-vnejsi-stredni.gpx: no overlap with recorded track rhomboid bounds.
+2026-01-17 11:02:32,226 [INFO] No matching segments found for reference 'Jinacovice-vnejsi-stredni.gpx'.
+2026-01-17 11:02:32,226 [INFO] Processing reference segment: Jinacovice-vnitrni-kratky.gpx
+2026-01-17 11:02:32,226 [INFO] Reference 'Jinacovice-vnitrni-kratky.gpx' start: (49.280973, 16.523344), end: (49.280931, 16.523387), distance: 258.84 m
+2026-01-17 11:02:32,241 [INFO] Skipping reference Jinacovice-vnitrni-kratky.gpx: no overlap with recorded track rhomboid bounds.
+2026-01-17 11:02:32,241 [INFO] No matching segments found for reference 'Jinacovice-vnitrni-kratky.gpx'.
+2026-01-17 11:02:32,241 [INFO] Processing reference segment: Jinacovice-vnitrni-stredni.gpx
+2026-01-17 11:02:32,241 [INFO] Reference 'Jinacovice-vnitrni-stredni.gpx' start: (49.281010, 16.523298), end: (49.280931, 16.523387), distance: 313.75 m
+2026-01-17 11:02:32,255 [INFO] Skipping reference Jinacovice-vnitrni-stredni.gpx: no overlap with recorded track rhomboid bounds.
+2026-01-17 11:02:32,256 [INFO] No matching segments found for reference 'Jinacovice-vnitrni-stredni.gpx'.
+2026-01-17 11:02:32,256 [INFO] Processing reference segment: Jinacovice-vnitrni-kratky-2x.gpx
+2026-01-17 11:02:32,256 [INFO] Reference 'Jinacovice-vnitrni-kratky-2x.gpx' start: (49.280973, 16.523344), end: (49.280952, 16.523372), distance: 525.80 m
+2026-01-17 11:02:32,271 [INFO] Skipping reference Jinacovice-vnitrni-kratky-2x.gpx: no overlap with recorded track rhomboid bounds.
+2026-01-17 11:02:32,271 [INFO] No matching segments found for reference 'Jinacovice-vnitrni-kratky-2x.gpx'.
+2026-01-17 11:02:32,463 [INFO] Exported unmatched segments to GPX file: Adrom-nonmatching.gpx

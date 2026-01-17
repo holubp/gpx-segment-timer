@@ -1,0 +1,50 @@
+{
+  "matches": [
+    {
+      "segment": "Jinacovice-vnejsi-dlouhy.gpx",
+      "start_idx": 0,
+      "end_idx": 76
+    },
+    {
+      "segment": "Jinacovice-vnejsi-kratky.gpx",
+      "start_idx": 78,
+      "end_idx": 131
+    },
+    {
+      "segment": "Jinacovice-vnejsi-stredni.gpx",
+      "start_idx": 133,
+      "end_idx": 193
+    },
+    {
+      "segment": "Jinacovice-vnitrni-kratky-2x.gpx",
+      "start_idx": 195,
+      "end_idx": 288
+    },
+    {
+      "segment": "Jinacovice-vnitrni-kratky.gpx",
+      "start_idx": 290,
+      "end_idx": 349
+    },
+    {
+      "segment": "Jinacovice-vnitrni-stredni.gpx",
+      "start_idx": 351,
+      "end_idx": 409
+    },
+    {
+      "segment": "automotodrom-okruh-offroad-adv.gpx",
+      "start_idx": 411,
+      "end_idx": 1155
+    },
+    {
+      "segment": "automotodrom-okruh-offroad-les.gpx",
+      "start_idx": 1157,
+      "end_idx": 1427
+    },
+    {
+      "segment": "automotodrom-okruh-offroad.gpx",
+      "start_idx": 1429,
+      "end_idx": 2184
+    }
+  ],
+  "mode": "match_linger"
+}

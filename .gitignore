@@ -1,0 +1,19 @@
+# Private data
+/tests/data/real_world/private/
+/tests/expected/real_world/private/
+
+# Local tooling/output
+/__pycache__/
+/*.zip
+/new*_matched_segments*
+/new9_matched_segments.txt
+/tuning-needed/
+/old/
+/codex.sh
+
+# Editor/backup files
+*~
+*.un~
+
+# Test runner temp
+/tests/.tmp/

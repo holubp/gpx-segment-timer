@@ -1,0 +1,178 @@
+2026-01-17 12:08:32,548 [INFO] Initial config:
+2026-01-17 12:08:32,548 [INFO]   allow_length_mismatch=False
+2026-01-17 12:08:32,548 [INFO]   anchor_beta1=1.0
+2026-01-17 12:08:32,548 [INFO]   anchor_beta2=1.0
+2026-01-17 12:08:32,549 [INFO]   bbox_margin=30
+2026-01-17 12:08:32,549 [INFO]   candidate_endpoint_margin_m=-1.0
+2026-01-17 12:08:32,549 [INFO]   candidate_margin=0.2
+2026-01-17 12:08:32,549 [INFO]   crossing_edge_window_s=1.0
+2026-01-17 12:08:32,549 [INFO]   crossing_endpoint_weight=1.0
+2026-01-17 12:08:32,549 [INFO]   crossing_expand_k=1.0
+2026-01-17 12:08:32,549 [INFO]   crossing_expand_mode=ratio
+2026-01-17 12:08:32,549 [INFO]   crossing_length_weight=-1.0
+2026-01-17 12:08:32,549 [INFO]   crossing_shape_weight=1.0
+2026-01-17 12:08:32,549 [INFO]   crossing_shape_window_frac=0.2
+2026-01-17 12:08:32,549 [INFO]   crossing_shape_window_min=3
+2026-01-17 12:08:32,549 [INFO]   crossing_window_max=200
+2026-01-17 12:08:32,549 [INFO]   debug=False
+2026-01-17 12:08:32,549 [INFO]   dtw_penalty=linear
+2026-01-17 12:08:32,549 [INFO]   dtw_penalty_huber_k=5.0
+2026-01-17 12:08:32,549 [INFO]   dtw_penalty_scale_m=10.0
+2026-01-17 12:08:32,549 [INFO]   dtw_threshold=50
+2026-01-17 12:08:32,549 [INFO]   dtw_window_m=30.0
+2026-01-17 12:08:32,550 [INFO]   dtw_window_max_avg=5.0
+2026-01-17 12:08:32,550 [INFO]   dump_candidates_gpx=None
+2026-01-17 12:08:32,550 [INFO]   endpoint_spatial_weight=0.25
+2026-01-17 12:08:32,550 [INFO]   endpoint_window_end=10.0
+2026-01-17 12:08:32,550 [INFO]   endpoint_window_start=10.0
+2026-01-17 12:08:32,550 [INFO]   envelope_allow_off=(2, 100.0)
+2026-01-17 12:08:32,550 [INFO]   envelope_max_m=5.0
+2026-01-17 12:08:32,550 [INFO]   envelope_sample_max=0
+2026-01-17 12:08:32,550 [INFO]   export_gpx=False
+2026-01-17 12:08:32,550 [INFO]   export_gpx_file=matched_segments.gpx
+2026-01-17 12:08:32,550 [INFO]   export_unmatched_gpx=False
+2026-01-17 12:08:32,550 [INFO]   export_unmatched_gpx_file=unmatched_segments.gpx
+2026-01-17 12:08:32,550 [INFO]   export_unmatched_max_m=-1.0
+2026-01-17 12:08:32,550 [INFO]   export_unmatched_min_m=-1.0
+2026-01-17 12:08:32,550 [INFO]   final_xtrack_max_m=-1.0
+2026-01-17 12:08:32,550 [INFO]   final_xtrack_p95_m=-1.0
+2026-01-17 12:08:32,550 [INFO]   final_xtrack_samples=0
+2026-01-17 12:08:32,550 [INFO]   gps_error_m=12.0
+2026-01-17 12:08:32,550 [INFO]   group_by_segment=False
+2026-01-17 12:08:32,550 [INFO]   iterative_window_end=20
+2026-01-17 12:08:32,550 [INFO]   iterative_window_start=20
+2026-01-17 12:08:32,551 [INFO]   line_length_m=8.0
+2026-01-17 12:08:32,551 [INFO]   matching_preset=standard
+2026-01-17 12:08:32,551 [INFO]   min_gap=1
+2026-01-17 12:08:32,551 [INFO]   min_length_ratio=0.8
+2026-01-17 12:08:32,551 [INFO]   no_refinement=False
+2026-01-17 12:08:32,551 [INFO]   output_file=None
+2026-01-17 12:08:32,551 [INFO]   output_mode=stdout
+2026-01-17 12:08:32,551 [INFO]   passage_edge_frac=0.1
+2026-01-17 12:08:32,551 [INFO]   passage_radius=30.0
+2026-01-17 12:08:32,551 [INFO]   penalty_weight=2.0
+2026-01-17 12:08:32,551 [INFO]   prefilter_xtrack_max_m=-1.0
+2026-01-17 12:08:32,551 [INFO]   prefilter_xtrack_p95_m=-1.0
+2026-01-17 12:08:32,551 [INFO]   prefilter_xtrack_samples=80
+2026-01-17 12:08:32,551 [INFO]   recorded=tests/data/synthetic/match_noise/recorded.gpx
+2026-01-17 12:08:32,551 [INFO]   reference_folder=segments
+2026-01-17 12:08:32,551 [INFO]   resample_count=200
+2026-01-17 12:08:32,551 [INFO]   resample_max=400
+2026-01-17 12:08:32,551 [INFO]   shape_mode=step_vectors
+2026-01-17 12:08:32,551 [INFO]   single_passage=False
+2026-01-17 12:08:32,551 [INFO]   skip_endpoint_checks=False
+2026-01-17 12:08:32,551 [INFO]   strict_envelope_off_pct=0.2
+2026-01-17 12:08:32,552 [INFO]   strict_envelope_window_m=30.0
+2026-01-17 12:08:32,552 [INFO]   target_spacing_m=8.0
+2026-01-17 12:08:32,552 [INFO]   verbose=True
+2026-01-17 12:08:32,552 [INFO] Loading recorded track: tests/data/synthetic/match_noise/recorded.gpx
+2026-01-17 12:08:32,609 [INFO] Recorded GPX stats: 1 track(s), 257 total points (track1=257 pts in 1 segs)
+2026-01-17 12:08:32,662 [INFO] Loading reference segments from folder: segments
+2026-01-17 12:08:32,713 [INFO] Reference automotodrom-okruh-offroad-les.gpx GPX stats: 1 track(s), 246 total points (track1=246 pts in 1 segs)
+2026-01-17 12:08:32,880 [INFO] Reference automotodrom-okruh-offroad-adv.gpx GPX stats: 1 track(s), 720 total points (track1=720 pts in 1 segs)
+2026-01-17 12:08:33,115 [INFO] Reference automotodrom-okruh-offroad.gpx GPX stats: 1 track(s), 731 total points (track1=731 pts in 1 segs)
+2026-01-17 12:08:33,246 [INFO] Reference Jinacovice-vnejsi-dlouhy.gpx GPX stats: 1 track(s), 52 total points (track1=52 pts in 1 segs)
+2026-01-17 12:08:33,264 [INFO] Reference Jinacovice-vnejsi-kratky.gpx GPX stats: 1 track(s), 29 total points (track1=29 pts in 1 segs)
+2026-01-17 12:08:33,279 [INFO] Reference Jinacovice-vnejsi-stredni.gpx GPX stats: 1 track(s), 36 total points (track1=36 pts in 1 segs)
+2026-01-17 12:08:33,295 [INFO] Reference Jinacovice-vnitrni-kratky.gpx GPX stats: 1 track(s), 35 total points (track1=35 pts in 1 segs)
+2026-01-17 12:08:33,310 [INFO] Reference Jinacovice-vnitrni-stredni.gpx GPX stats: 1 track(s), 34 total points (track1=34 pts in 1 segs)
+2026-01-17 12:08:33,331 [INFO] Reference Jinacovice-vnitrni-kratky-2x.gpx GPX stats: 1 track(s), 69 total points (track1=69 pts in 1 segs)
+2026-01-17 12:08:33,347 [INFO] Recorded GPX median sampling interval: 0.200 s
+2026-01-17 12:08:33,347 [INFO] Post-load config:
+2026-01-17 12:08:33,347 [INFO]   allow_length_mismatch=False
+2026-01-17 12:08:33,347 [INFO]   anchor_beta1=1.0
+2026-01-17 12:08:33,347 [INFO]   anchor_beta2=1.0
+2026-01-17 12:08:33,347 [INFO]   bbox_margin=30
+2026-01-17 12:08:33,347 [INFO]   candidate_endpoint_margin_m=-1.0
+2026-01-17 12:08:33,348 [INFO]   candidate_margin=0.2
+2026-01-17 12:08:33,348 [INFO]   crossing_edge_window_s=1.0
+2026-01-17 12:08:33,348 [INFO]   crossing_endpoint_weight=1.0
+2026-01-17 12:08:33,348 [INFO]   crossing_expand_k=1.0
+2026-01-17 12:08:33,348 [INFO]   crossing_expand_mode=ratio
+2026-01-17 12:08:33,348 [INFO]   crossing_length_weight=-1.0
+2026-01-17 12:08:33,348 [INFO]   crossing_shape_weight=1.0
+2026-01-17 12:08:33,348 [INFO]   crossing_shape_window_frac=0.2
+2026-01-17 12:08:33,348 [INFO]   crossing_shape_window_min=3
+2026-01-17 12:08:33,348 [INFO]   crossing_window_max=200
+2026-01-17 12:08:33,348 [INFO]   debug=False
+2026-01-17 12:08:33,348 [INFO]   dtw_penalty=linear
+2026-01-17 12:08:33,348 [INFO]   dtw_penalty_huber_k=5.0
+2026-01-17 12:08:33,348 [INFO]   dtw_penalty_scale_m=10.0
+2026-01-17 12:08:33,348 [INFO]   dtw_threshold=50
+2026-01-17 12:08:33,348 [INFO]   dtw_window_m=30.0
+2026-01-17 12:08:33,348 [INFO]   dtw_window_max_avg=5.0
+2026-01-17 12:08:33,348 [INFO]   dump_candidates_gpx=None
+2026-01-17 12:08:33,348 [INFO]   endpoint_spatial_weight=0.25
+2026-01-17 12:08:33,348 [INFO]   endpoint_window_end=10.0
+2026-01-17 12:08:33,348 [INFO]   endpoint_window_start=10.0
+2026-01-17 12:08:33,349 [INFO]   envelope_allow_off=(2, 100.0)
+2026-01-17 12:08:33,349 [INFO]   envelope_max_m=5.0
+2026-01-17 12:08:33,349 [INFO]   envelope_sample_max=0
+2026-01-17 12:08:33,349 [INFO]   export_gpx=False
+2026-01-17 12:08:33,349 [INFO]   export_gpx_file=matched_segments.gpx
+2026-01-17 12:08:33,349 [INFO]   export_unmatched_gpx=False
+2026-01-17 12:08:33,349 [INFO]   export_unmatched_gpx_file=unmatched_segments.gpx
+2026-01-17 12:08:33,349 [INFO]   export_unmatched_max_m=-1.0
+2026-01-17 12:08:33,349 [INFO]   export_unmatched_min_m=-1.0
+2026-01-17 12:08:33,349 [INFO]   final_xtrack_max_m=-1.0
+2026-01-17 12:08:33,349 [INFO]   final_xtrack_p95_m=-1.0
+2026-01-17 12:08:33,349 [INFO]   final_xtrack_samples=0
+2026-01-17 12:08:33,349 [INFO]   gps_error_m=12.0
+2026-01-17 12:08:33,349 [INFO]   group_by_segment=False
+2026-01-17 12:08:33,349 [INFO]   iterative_window_end=20
+2026-01-17 12:08:33,349 [INFO]   iterative_window_start=20
+2026-01-17 12:08:33,349 [INFO]   line_length_m=8.0
+2026-01-17 12:08:33,349 [INFO]   matching_preset=standard
+2026-01-17 12:08:33,349 [INFO]   median_sampling_s=0.2
+2026-01-17 12:08:33,349 [INFO]   min_gap=1
+2026-01-17 12:08:33,349 [INFO]   min_length_ratio=0.8
+2026-01-17 12:08:33,350 [INFO]   no_refinement=False
+2026-01-17 12:08:33,350 [INFO]   output_file=None
+2026-01-17 12:08:33,350 [INFO]   output_mode=stdout
+2026-01-17 12:08:33,350 [INFO]   passage_edge_frac=0.1
+2026-01-17 12:08:33,350 [INFO]   passage_radius=30.0
+2026-01-17 12:08:33,350 [INFO]   penalty_weight=2.0
+2026-01-17 12:08:33,350 [INFO]   prefilter_xtrack_max_m=-1.0
+2026-01-17 12:08:33,350 [INFO]   prefilter_xtrack_p95_m=-1.0
+2026-01-17 12:08:33,350 [INFO]   prefilter_xtrack_samples=80
+2026-01-17 12:08:33,350 [INFO]   recorded=tests/data/synthetic/match_noise/recorded.gpx
+2026-01-17 12:08:33,350 [INFO]   reference_folder=segments
+2026-01-17 12:08:33,350 [INFO]   resample_count=200
+2026-01-17 12:08:33,350 [INFO]   resample_max=400
+2026-01-17 12:08:33,350 [INFO]   shape_mode=step_vectors
+2026-01-17 12:08:33,350 [INFO]   single_passage=False
+2026-01-17 12:08:33,350 [INFO]   skip_endpoint_checks=False
+2026-01-17 12:08:33,350 [INFO]   strict_envelope_off_pct=0.2
+2026-01-17 12:08:33,350 [INFO]   strict_envelope_window_m=30.0
+2026-01-17 12:08:33,350 [INFO]   target_spacing_m=8.0
+2026-01-17 12:08:33,350 [INFO]   verbose=True
+2026-01-17 12:08:33,350 [INFO] Processing reference segment: automotodrom-okruh-offroad-les.gpx
+2026-01-17 12:08:33,351 [INFO] Reference 'automotodrom-okruh-offroad-les.gpx' start: (49.204479, 16.459172), end: (49.204745, 16.461521), distance: 1546.04 m
+2026-01-17 12:08:33,439 [INFO] Envelope prefilter (strict window): window=30.0m envelope=5.00m allow_off_base=1 off_pct=0.200 bad_windows=10
+2026-01-17 12:08:33,439 [INFO] Start-bbox runs (inclusive indices): [0,6]
+2026-01-17 12:08:33,440 [INFO] For start-run [0,6], end-index windows by distance: [179,256)
+2026-01-17 12:08:33,440 [INFO] Run [0,6]: 526 distance-window pairs pre-filter; 30 candidates after bbox filters.
+2026-01-17 12:08:33,440 [INFO] Run [0,6]: strict envelope rejects: 19
+2026-01-17 12:08:33,440 [INFO] Total DTW candidates to assess: 30
+2026-01-17 12:08:33,440 [INFO] Strict envelope rejects total: 19
+2026-01-17 12:08:33,440 [INFO] DTW window rejects total: 0
+2026-01-17 12:08:34,742 [INFO] Run 0 winner: s=5 e=255 (exclusive), dtw_avg=2.11, dtw_window_max_avg=4.82
+2026-01-17 12:08:34,742 [INFO] Run 0: DTW window rejects: 1
+2026-01-17 12:08:34,743 [INFO] Segment config:
+2026-01-17 12:08:34,744 [INFO]   bbox_margin=30
+2026-01-17 12:08:34,744 [INFO]   candidate_margin=0.2
+2026-01-17 12:08:34,744 [INFO]   crossing_L=38
+2026-01-17 12:08:34,744 [INFO]   crossing_edge_window_pts=5
+2026-01-17 12:08:34,744 [INFO]   line_length_m=8.0
+2026-01-17 12:08:34,744 [INFO]   ref_segment=automotodrom-okruh-offroad-les.gpx
+2026-01-17 12:08:34,744 [INFO]   resample_count=194
+Traceback (most recent call last):
+  File "/storage/emulated/0/GitHub/gpx-segment-timer/gpx-segment-timer.py", line 2274, in <module>
+    main()
+  File "/storage/emulated/0/GitHub/gpx-segment-timer/gpx-segment-timer.py", line 1728, in main
+    grid_start, grid_end = refine_boundaries_iteratively(
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/storage/emulated/0/GitHub/gpx-segment-timer/gpx-segment-timer.py", line 769, in refine_boundaries_iteratively
+    seg_distance = rec_cum_dists[j] - rec_cum_dists[i]
+                   ~~~~~~~~~~~~~^^^
+IndexError: list index out of range
