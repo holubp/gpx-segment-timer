@@ -265,6 +265,31 @@ Examples:
 
 ---
 
+## Testing
+
+### Generate synthetic data
+
+Default layout aggregates all segments per mode:
+
+```
+python3 tests/tools/generate_synthetic_data.py \
+  --segments segments \
+  --segment-glob "*.gpx" \
+  --output tests/data/synthetic \
+  --expected tests/expected/synthetic
+```
+
+Per-segment layout writes one recorded track per reference segment (Option B):
+
+```
+python3 tests/tools/generate_synthetic_data.py \
+  --segments segments \
+  --segment-glob "*.gpx" \
+  --output tests/data/synthetic \
+  --expected tests/expected/synthetic \
+  --output-layout per-segment
+```
+
 ## Parameter Tuning Guidance
 
 ### Start/Finish Lines

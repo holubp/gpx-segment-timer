@@ -196,6 +196,12 @@ def main():
         default="match_noise,match_linger,match_detour,nonmatch_shift",
         help="Comma-separated list of synthetic modes to generate",
     )
+    parser.add_argument(
+        "--output-layout",
+        choices=["combined", "per-segment"],
+        default="combined",
+        help="Write one recorded.gpx per mode (combined) or per segment (per-segment)",
+    )
     args = parser.parse_args()
 
     rng = random.Random(args.seed)
@@ -205,8 +211,23 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
 
     modes = [m.strip() for m in args.modes.split(",") if m.strip()]
+    if args.output_layout == "combined":
+        for mode in modes:
+            build_case(output / mode, expected_root / mode, segments, args.segment_glob, rng, mode)
+        return
+
+    refs = sorted(segments.glob(args.segment_glob))
     for mode in modes:
-        build_case(output / mode, expected_root / mode, segments, args.segment_glob, rng, mode)
+        for ref in refs:
+            ref_name = ref.stem
+            build_case(
+                output / mode / ref_name,
+                expected_root / mode / ref_name,
+                segments,
+                ref.name,
+                rng,
+                mode,
+            )
 
 
 if __name__ == "__main__":

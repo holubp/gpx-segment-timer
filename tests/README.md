@@ -51,8 +51,21 @@ python3 tests/tools/generate_synthetic_data.py \
 Useful options:
 
 - `--segment-glob` selects which reference segments are synthesized.
+- `--output-layout` chooses `combined` (one recorded.gpx per mode) or `per-segment`
+  (one recorded.gpx per mode and per reference segment).
 - `--modes` controls which variation modes are generated (default: match_noise, match_linger,
   match_detour, nonmatch_shift).
+
+Example: generate per-segment synthetic data for all segments:
+
+```
+python3 tests/tools/generate_synthetic_data.py \
+  --segments segments \
+  --segment-glob "*.gpx" \
+  --output tests/data/synthetic \
+  --expected tests/expected/synthetic \
+  --output-layout per-segment
+```
 
 ## Result Interpretation
 
