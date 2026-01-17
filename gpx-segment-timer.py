@@ -1293,7 +1293,10 @@ def export_match_bundle(match: Dict[str, Any],
 def export_unmatched_segments(recorded_points: List[Dict[str, Any]],
                               unmatched_windows: List[Tuple[int, int]],
                               recorded_filename: str,
-                              output_gpx: str) -> None:
+                              output_gpx: str,
+                              rec_cum_dists: Optional[List[float]] = None,
+                              min_length_m: float = -1.0,
+                              max_length_m: float = -1.0) -> None:
     """
     Export unmatched recorded windows as a single GPX with multiple tracks.
     """
@@ -1302,6 +1305,12 @@ def export_unmatched_segments(recorded_points: List[Dict[str, Any]],
     for idx, (start_idx, end_idx) in enumerate(unmatched_windows, start=1):
         if end_idx - start_idx < 2:
             continue
+        if rec_cum_dists is not None and len(rec_cum_dists) == len(recorded_points):
+            seg_len = rec_cum_dists[end_idx - 1] - rec_cum_dists[start_idx]
+            if min_length_m > 0 and seg_len < min_length_m:
+                continue
+            if max_length_m > 0 and seg_len > max_length_m:
+                continue
         track = gpxpy.gpx.GPXTrack()
         track.name = f"unmatched {idx}: {os.path.basename(recorded_filename)} [{start_idx},{end_idx})"
         segment = gpxpy.gpx.GPXTrackSegment()
@@ -1572,6 +1581,10 @@ def main() -> None:
                         help="Export unmatched recorded segments as a single GPX with multiple tracks.")
     parser.add_argument("--export-unmatched-gpx-file", default="unmatched_segments.gpx",
                         help="Output GPX file for exporting unmatched recorded segments.")
+    parser.add_argument("--export-unmatched-min-m", type=float, default=-1.0,
+                        help="Minimum length (meters) for unmatched segment export; negative disables.")
+    parser.add_argument("--export-unmatched-max-m", type=float, default=-1.0,
+                        help="Maximum length (meters) for unmatched segment export; negative disables.")
     parser.add_argument("--dump-candidates-gpx", default=None,
                         help="If set, dumps per start-bbox run the candidate segments (after bbox filters) into GPX files. Use placeholders {ref}, {run}, {rs}, {re}, {n}.")
     parser.add_argument("--group-by-segment", action="store_true",
@@ -2250,6 +2263,9 @@ def main() -> None:
                 unmatched_windows,
                 args.recorded,
                 args.export_unmatched_gpx_file,
+                rec_cum_dists=rec_cum_dists,
+                min_length_m=args.export_unmatched_min_m,
+                max_length_m=args.export_unmatched_max_m,
             )
         else:
             logging.info("No unmatched segments to export.")

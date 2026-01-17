@@ -97,10 +97,28 @@ Examples:
 | `--export-gpx-file` | Base name for exported GPX files (default: `matched_segments.gpx`). |
 | `--export-unmatched-gpx` | Export unmatched recorded segments as a single GPX with multiple tracks (default: off). |
 | `--export-unmatched-gpx-file` | Output GPX file for unmatched segments (default: `unmatched_segments.gpx`). |
+| `--export-unmatched-min-m` | Minimum length (meters) for unmatched segment export; negative disables (default `-1.0`, off). |
+| `--export-unmatched-max-m` | Maximum length (meters) for unmatched segment export; negative disables (default `-1.0`, off). |
 | `--dump-candidates-gpx` | Dump bbox-filtered candidates with placeholders `{ref}`, `{run}`, `{rs}`, `{re}`, `{n}` (default: off). |
 | `--group-by-segment` | Group output by segment name (default: off; default output sorted by start index). |
 
 ### Matching / Refinement
+
+#### Methods Summary (defaults + tradeoffs)
+
+| Method | Purpose | Pros | Cons | Default |
+|--------|---------|------|------|---------|
+| Overall bbox | Fast spatial prune of impossible refs. | Very cheap. | Can miss if bbox margin too small. | On (derived from `--bbox-margin`). |
+| Envelope prefilter | Enforce max distance to reference polyline. | Strong drift guard. | Can drop true matches when GPS offset is large. | On if `--envelope-max-m > 0` (preset). |
+| Strict envelope window | Sliding window drift guard. | Catches local detours. | Sensitive to window size. | On in presets (`--strict-envelope-window-m`). |
+| X-track prefilter (p95/max) | Quick percentile/max gate on candidates. | Removes obvious off-track matches. | Sampling can miss brief detours. | Off unless `--prefilter-xtrack-*-m` set. |
+| DTW threshold | Global shape similarity gate. | Ensures overall shape match. | Can hide local deviations on long segments. | On (`--dtw-threshold` default 50). |
+| DTW sliding window | Max local DTW guard. | Detects localized detours. | Needs tuning for noisy tracks. | On in presets (`--dtw-window-m`, `--dtw-window-max-avg`). |
+| Endpoint refinement | Tightens boundaries near start/finish. | Improves timing precision. | Too wide can snap to wrong crossings. | On (window defaults 10m). |
+| Endpoint deviation checks | Rejects matches with start/end too far. | Avoids bad anchors. | Can drop matches with large GPS shift. | On unless `--skip-endpoint-checks`. |
+| Length floor (`min-length-ratio`) | Rejects matches that are too short. | Filters partial laps. | Can drop valid linger/loop cases if too strict. | On by default (0.8). |
+| Final x-track gates | Last-chance drift guard. | Robust final cleanup. | Can drop matches under heavy GPS drift. | Off unless `--final-xtrack-*-m` set. |
+| Single-passage check | Rejects re-entries for non-repeating refs. | Useful for non-looping segments. | Not valid for repeating/self-intersecting refs. | Off unless `--single-passage`. |
 
 #### Candidate Selection + Spatial Prefilters
 
@@ -110,11 +128,11 @@ Examples:
 | `--candidate-margin` | Relative distance tolerance for candidates (default `0.2`). |
 | `--candidate-endpoint-margin-m` | Start/end bbox margin for candidate selection (meters); negative uses `--gps-error-m` (default `-1.0`). |
 | `--bbox-margin` | Endpoint deviation tolerance in meters (default `30`); overall bbox margin is `--bbox-margin * 3.33`. |
-| `--envelope-max-m` | Max distance from reference polyline for envelope prefilter; negative uses `--gps-error-m` (default: preset; standard `5.0`). |
+| `--envelope-max-m` | Max distance from reference polyline for envelope prefilter; negative uses `--gps-error-m` (default: preset; standard `5.0`, on when `> 0`). |
 | `--envelope-allow-off` | Allowed off-envelope samples per meters: `<points> <meters>` (default `2 100`). |
 | `--envelope-sample-max` | Max number of samples per candidate for envelope prefilter; `0` uses all points (default `0`, off only when `--envelope-max-m <= 0`). |
-| `--strict-envelope-window-m` | Sliding strict envelope window length in meters; negative disables (default: preset; standard `30.0`, off when `< 0`). |
-| `--strict-envelope-off-pct` | Allowed off-envelope percentage within each strict window; `0` disables (default: preset; standard `0.2`, off when `0`). |
+| `--strict-envelope-window-m` | Sliding strict envelope window length in meters; negative disables (default: preset; standard `30.0`, on when `> 0`). |
+| `--strict-envelope-off-pct` | Allowed off-envelope percentage within each strict window; `0` disables (default: preset; standard `0.2`, on when `> 0`). |
 | `--prefilter-xtrack-p95-m` | Enable x-track p95 prefilter (meters); negative disables (default `-1.0`, off). |
 | `--prefilter-xtrack-max-m` | Enable x-track max prefilter (meters); negative disables (default `-1.0`, off). |
 | `--prefilter-xtrack-samples` | Sample count for x-track prefilter (default `80`; applies to p95/max). |
@@ -124,8 +142,8 @@ Examples:
 | Option | Description |
 |--------|-------------|
 | `--dtw-threshold` | Max avg DTW cost (default `50`). |
-| `--dtw-window-m` | Sliding DTW window length in meters; negative disables (default: preset; standard `30.0`, off when `< 0`). |
-| `--dtw-window-max-avg` | Reject candidates whose max avg DTW within the window exceeds this; negative disables (default: preset; standard `5.0`, off when `< 0`). |
+| `--dtw-window-m` | Sliding DTW window length in meters; negative disables (default: preset; standard `30.0`, on when `> 0`). |
+| `--dtw-window-max-avg` | Reject candidates whose max avg DTW within the window exceeds this; negative disables (default: preset; standard `5.0`, on when `> 0`). |
 | `--dtw-penalty` | DTW penalty: `linear`, `quadratic`, `huber` (default `linear`). |
 | `--dtw-penalty-scale-m` | Scale for quadratic DTW penalty (meters, default `10.0`). |
 | `--dtw-penalty-huber-k` | Huber k parameter for DTW penalty (meters, default `5.0`). |
@@ -139,7 +157,7 @@ Examples:
 | Option | Description |
 |--------|-------------|
 | `--allow-length-mismatch` | Allow candidates outside length window (default: off). |
-| `--min-length-ratio` | Reject matches shorter than this fraction of reference length; `0` disables (default `0.8`, on when `> 0`). |
+| `--min-length-ratio` | Reject matches shorter than this fraction of reference length; `0` disables (default `0.8`, on). |
 | `--endpoint-window-start` | Start endpoint sliding window in meters (default `10.0`, converted to points using cumulative distance). |
 | `--endpoint-window-end` | End endpoint sliding window in meters (default `10.0`, converted to points using cumulative distance). |
 | `--endpoint-spatial-weight` | Spatial weight in endpoint refinement (default `0.25`). |
@@ -261,11 +279,13 @@ See the **Matching Presets** section for defaults and guidance.
 - **`--strict-envelope-window-m`** controls the sliding window length used to enforce local envelope adherence.
 - **`--strict-envelope-off-pct`** caps how many points in each window can be outside the envelope.
 - Combine with **`--envelope-max-m`** to set the envelope width (meters from the reference polyline).
+Defaults are enabled via presets; set negative values or `0` to disable.
 
 ### DTW Sliding Window
 - **`--dtw-window-m`** and **`--dtw-window-max-avg`** guard against long segments that hide local deviations.
 - If you see long candidates with local detours that still pass average DTW, tighten `--dtw-window-max-avg`.
 - Use larger values for noisy recordings where line crossings are offset.
+Defaults are enabled via presets; set negative values to disable.
 
 ### Shape Matching
 - **`--shape-mode`**: `step_vectors` is robust for general use, `heading` can help for curvature emphasis, `centered` is useful for centroid-stable tracks.
