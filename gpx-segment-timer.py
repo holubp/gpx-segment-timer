@@ -877,6 +877,7 @@ def find_all_segment_matches(recorded_points: List[Dict[str, Any]],
                              strict_envelope_window_m: float = -1.0,
                              strict_envelope_off_pct: float = 0.0,
                              prefilter_xtrack_p95_m: float = -1.0,
+                             prefilter_xtrack_max_m: float = -1.0,
                              prefilter_xtrack_samples: int = 80,
                              dump_pattern: Optional[str] = None,
                              ref_name: Optional[str] = None,
@@ -934,7 +935,7 @@ def find_all_segment_matches(recorded_points: List[Dict[str, Any]],
     # Precompute distances to reference polyline once per segment.
     dist_all: List[float] = []
     pref_off_all: List[int] = [0] * (len(recorded_points) + 1)
-    if envelope_max_m > 0 or prefilter_xtrack_p95_m > 0 or strict_envelope_window_m > 0:
+    if envelope_max_m > 0 or prefilter_xtrack_p95_m > 0 or prefilter_xtrack_max_m > 0 or strict_envelope_window_m > 0:
         off_all: List[int] = []
         rec_xy = [
             _point_to_xy(pt["lat"], pt["lon"], ref_origin, lat_scale_ref)
@@ -1048,7 +1049,7 @@ def find_all_segment_matches(recorded_points: List[Dict[str, Any]],
                     continue
                 if e <= s:
                     continue
-                if envelope_max_m > 0 or prefilter_xtrack_p95_m > 0:
+                if envelope_max_m > 0 or prefilter_xtrack_p95_m > 0 or prefilter_xtrack_max_m > 0:
                     edge_guard = max(1, int(0.05 * (e - s)))
                     inner_s = s + edge_guard
                     inner_e = e - edge_guard
@@ -1070,14 +1071,17 @@ def find_all_segment_matches(recorded_points: List[Dict[str, Any]],
                                 off_count = pref_off_all[inner_e + 1] - pref_off_all[inner_s]
                                 if off_count > allowed_off:
                                     continue
-                        if prefilter_xtrack_p95_m > 0 and dist_all:
+                        if dist_all and (prefilter_xtrack_p95_m > 0 or prefilter_xtrack_max_m > 0):
                             sample_len = max(1, prefilter_xtrack_samples)
                             step = max(1, (inner_e - inner_s + 1) // sample_len)
                             sampled = dist_all[inner_s:inner_e + 1:step]
                             sampled.sort()
-                            p95_idx = int(math.ceil(0.95 * len(sampled))) - 1
-                            p95 = sampled[max(0, min(p95_idx, len(sampled) - 1))]
-                            if p95 > prefilter_xtrack_p95_m:
+                            if prefilter_xtrack_p95_m > 0:
+                                p95_idx = int(math.ceil(0.95 * len(sampled))) - 1
+                                p95 = sampled[max(0, min(p95_idx, len(sampled) - 1))]
+                                if p95 > prefilter_xtrack_p95_m:
+                                    continue
+                            if prefilter_xtrack_max_m > 0 and sampled[-1] > prefilter_xtrack_max_m:
                                 continue
                 if strict_max_bad_start is not None and strict_max_bad_start[e] >= s:
                     strict_rejects_total += 1
@@ -1444,12 +1448,16 @@ def main() -> None:
                         help="Allowed off-envelope percent per strict window (0 disables).")
     parser.add_argument("--prefilter-xtrack-p95-m", type=float, default=-1.0,
                         help="Enable x-track p95 prefilter (meters); negative disables.")
+    parser.add_argument("--prefilter-xtrack-max-m", type=float, default=-1.0,
+                        help="Enable x-track max prefilter (meters); negative disables.")
     parser.add_argument("--prefilter-xtrack-samples", type=int, default=80,
-                        help="Number of samples for x-track p95 prefilter.")
+                        help="Number of samples for x-track prefilter (p95/max).")
     parser.add_argument("--final-xtrack-p95-m", type=float, default=-1.0,
                         help="Reject final matches if x-track p95 exceeds this (meters); negative disables.")
     parser.add_argument("--final-xtrack-max-m", type=float, default=-1.0,
                         help="Reject final matches if x-track max exceeds this (meters); negative disables.")
+    parser.add_argument("--final-xtrack-samples", type=int, default=0,
+                        help="Sample count for final x-track stats; 0 uses all points.")
     parser.add_argument("--allow-length-mismatch", action="store_true",
                         help="Allow final detected segment length to differ from reference beyond candidate-margin without rejecting the match.")
     parser.add_argument("--min-length-ratio", type=float, default=0.8,
@@ -1628,6 +1636,7 @@ def main() -> None:
             strict_envelope_window_m=args.strict_envelope_window_m,
             strict_envelope_off_pct=args.strict_envelope_off_pct,
             prefilter_xtrack_p95_m=args.prefilter_xtrack_p95_m,
+            prefilter_xtrack_max_m=args.prefilter_xtrack_max_m,
             prefilter_xtrack_samples=args.prefilter_xtrack_samples,
             dump_pattern=args.dump_candidates_gpx,
             ref_name=seg_filename,
@@ -2101,7 +2110,7 @@ def main() -> None:
                     continue
             if args.final_xtrack_p95_m > 0 or args.final_xtrack_max_m > 0:
                 p95, xmax = compute_xtrack_stats(
-                    recorded_points, ref_points, lat_scale_ref, final_start, final_end, sample_max=0
+                    recorded_points, ref_points, lat_scale_ref, final_start, final_end, sample_max=args.final_xtrack_samples
                 )
                 if p95 is not None and xmax is not None:
                     logging.info("Final xtrack for '%s': p95=%.2f m, max=%.2f m.",

@@ -71,7 +71,7 @@ Preset intent:
 - **`tight`**: packed tracks with similar shapes (e.g., Jinacovice).
 - **`standard`**: general-purpose default.
 - **`loose`**: noisy/forested tracks; allows more drift.
-- **`loosest`**: extreme GPS drift; consider enabling x-track gates (`--prefilter-xtrack-p95-m` or `--final-xtrack-p95-m`).
+- **`loosest`**: extreme GPS drift; consider enabling x-track gates (`--prefilter-xtrack-p95-m`, `--prefilter-xtrack-max-m`, `--final-xtrack-p95-m`, `--final-xtrack-max-m`).
 - **`none`**: skip preset defaults; use explicit flags or legacy defaults.
 
 Examples:
@@ -100,43 +100,57 @@ Examples:
 
 ### Matching / Refinement
 
+#### Candidate Selection + Spatial Prefilters
+
 | Option | Description |
 |--------|-------------|
-| `--candidate-margin` | Relative distance tolerance for candidates (default `0.2`). |
 | `--matching-preset` | Preset defaults for strict envelope + DTW window (`standard`, `tight`, `loose`, `loosest`, `none`; default `standard`). |
+| `--candidate-margin` | Relative distance tolerance for candidates (default `0.2`). |
 | `--candidate-endpoint-margin-m` | Start/end bbox margin for candidate selection (meters); negative uses `--gps-error-m` (default `-1.0`). |
+| `--bbox-margin` | Endpoint deviation tolerance in meters (default `30`); overall bbox margin is `--bbox-margin * 3.33`. |
 | `--envelope-max-m` | Max distance from reference polyline for envelope prefilter; negative uses `--gps-error-m` (default: preset; standard `5.0`). |
 | `--envelope-allow-off` | Allowed off-envelope samples per meters: `<points> <meters>` (default `2 100`). |
-| `--envelope-sample-max` | Max number of samples per candidate for envelope prefilter; `0` uses all points (default `0`). |
-| `--strict-envelope-window-m` | Sliding strict envelope window length in meters; negative disables (default: preset; standard `30.0`). |
-| `--strict-envelope-off-pct` | Allowed off-envelope percentage within each strict window; `0` disables (default: preset; standard `0.2`). |
-| `--prefilter-xtrack-p95-m` | Enable x-track p95 prefilter (meters); negative disables (default `-1.0`). |
-| `--prefilter-xtrack-samples` | Sample count for x-track p95 prefilter (default `80`). |
-| `--final-xtrack-p95-m` | Reject final matches if x-track p95 exceeds this (meters); negative disables (default `-1.0`). |
-| `--final-xtrack-max-m` | Reject final matches if x-track max exceeds this (meters); negative disables (default `-1.0`). |
-| `--allow-length-mismatch` | Allow candidates outside length window (default: off). |
-| `--min-length-ratio` | Reject matches shorter than this fraction of reference length; `0` disables (default `0.8`). |
+| `--envelope-sample-max` | Max number of samples per candidate for envelope prefilter; `0` uses all points (default `0`, off only when `--envelope-max-m <= 0`). |
+| `--strict-envelope-window-m` | Sliding strict envelope window length in meters; negative disables (default: preset; standard `30.0`, off when `< 0`). |
+| `--strict-envelope-off-pct` | Allowed off-envelope percentage within each strict window; `0` disables (default: preset; standard `0.2`, off when `0`). |
+| `--prefilter-xtrack-p95-m` | Enable x-track p95 prefilter (meters); negative disables (default `-1.0`, off). |
+| `--prefilter-xtrack-max-m` | Enable x-track max prefilter (meters); negative disables (default `-1.0`, off). |
+| `--prefilter-xtrack-samples` | Sample count for x-track prefilter (default `80`; applies to p95/max). |
+
+#### DTW + Shape Matching
+
+| Option | Description |
+|--------|-------------|
 | `--dtw-threshold` | Max avg DTW cost (default `50`). |
-| `--dtw-window-m` | Sliding DTW window length in meters; negative disables (default: preset; standard `30.0`). |
-| `--dtw-window-max-avg` | Reject candidates whose max avg DTW within the window exceeds this; negative disables (default: preset; standard `5.0`). |
+| `--dtw-window-m` | Sliding DTW window length in meters; negative disables (default: preset; standard `30.0`, off when `< 0`). |
+| `--dtw-window-max-avg` | Reject candidates whose max avg DTW within the window exceeds this; negative disables (default: preset; standard `5.0`, off when `< 0`). |
 | `--dtw-penalty` | DTW penalty: `linear`, `quadratic`, `huber` (default `linear`). |
 | `--dtw-penalty-scale-m` | Scale for quadratic DTW penalty (meters, default `10.0`). |
 | `--dtw-penalty-huber-k` | Huber k parameter for DTW penalty (meters, default `5.0`). |
 | `--shape-mode` | `step_vectors`, `heading`, `centered`, or `auto` (default `step_vectors`). |
-| `--gps-error-m` | GPS error estimate in meters (default `12.0`; preset `loosest` sets `24.0` unless overridden). |
 | `--target-spacing-m` | Target meters between resampled points (default `8.0`; `<=0` disables). |
 | `--resample-max` | Max resample count when using target spacing (default `400`). |
 | `--resample-count` | Fixed resample count when target spacing is not used (default `200`, ignored when `--target-spacing-m > 0`). |
-| `--min-gap` | Minimum points to skip after a match (default `1`). |
-| `--bbox-margin` | Endpoint deviation tolerance in meters (default `30`); overall bbox margin is `--bbox-margin * 3.33`. |
+
+#### Refinement + Final Acceptance
+
+| Option | Description |
+|--------|-------------|
+| `--allow-length-mismatch` | Allow candidates outside length window (default: off). |
+| `--min-length-ratio` | Reject matches shorter than this fraction of reference length; `0` disables (default `0.8`, on when `> 0`). |
+| `--endpoint-window-start` | Start endpoint sliding window in meters (default `10.0`, converted to points using cumulative distance). |
+| `--endpoint-window-end` | End endpoint sliding window in meters (default `10.0`, converted to points using cumulative distance). |
+| `--endpoint-spatial-weight` | Spatial weight in endpoint refinement (default `0.25`). |
 | `--iterative-window-start` | Start refinement window (default `20`). |
 | `--iterative-window-end` | End refinement window (default `20`). |
 | `--penalty-weight` | Endpoint distance penalty during refinement (default `2.0`). |
 | `--anchor-beta1` | Start subsegment weight (default `1.0`). |
 | `--anchor-beta2` | End subsegment weight (default `1.0`). |
-| `--endpoint-window-start` | Start endpoint sliding window in meters (default `10.0`, converted to points using cumulative distance). |
-| `--endpoint-window-end` | End endpoint sliding window in meters (default `10.0`, converted to points using cumulative distance). |
-| `--endpoint-spatial-weight` | Spatial weight in endpoint refinement (default `0.25`). |
+| `--min-gap` | Minimum points to skip after a match (default `1`). |
+| `--final-xtrack-p95-m` | Reject final matches if x-track p95 exceeds this (meters); negative disables (default `-1.0`, off). |
+| `--final-xtrack-max-m` | Reject final matches if x-track max exceeds this (meters); negative disables (default `-1.0`, off). |
+| `--final-xtrack-samples` | Sample count for final x-track stats; `0` uses all points (default `0`). |
+| `--gps-error-m` | GPS error estimate in meters (default `12.0`; preset `loosest` sets `24.0` unless overridden). |
 | `--no-refinement` | Disable refinement steps (default: off). |
 | `--skip-endpoint-checks` | Keep matches even if endpoint diffs exceed `--bbox-margin` (default: off). |
 
@@ -264,13 +278,14 @@ See the **Matching Presets** section for defaults and guidance.
 ### Candidate Selection
 - **`--candidate-margin`** expands or tightens candidate distance windows.
 - **`--bbox-margin`** controls endpoint tolerance; tighter values reject more noise but can miss shifted tracks.
- - **`--candidate-endpoint-margin-m`** tightens start/end candidate bboxes independent of endpoint rejection.
- - **`--envelope-max-m`** and **`--envelope-allow-off`** prune candidates that drift off the reference polyline.
- - **`--prefilter-xtrack-p95-m`** adds an optional percentile-based cross-track gate.
+- **`--candidate-endpoint-margin-m`** tightens start/end candidate bboxes independent of endpoint rejection.
+- **`--envelope-max-m`** and **`--envelope-allow-off`** prune candidates that drift off the reference polyline.
+- **`--prefilter-xtrack-p95-m`** and **`--prefilter-xtrack-max-m`** add optional percentile/max cross-track gates.
 
 ### Refinement
 - **`--endpoint-window-start/end`** and **`--endpoint-spatial-weight`** can tighten endpoint placement.
 - **`--iterative-window-start/end`** and **`--penalty-weight`** adjust the iterative search around boundaries.
+- **`--final-xtrack-p95-m`**, **`--final-xtrack-max-m`**, and **`--final-xtrack-samples`** add optional final x-track gates.
 
 ### Debugging
 - Use **`--dump-candidates-gpx`** and **`--export-gpx`** to visually inspect candidate windows, line crossings, and interpolation points.
