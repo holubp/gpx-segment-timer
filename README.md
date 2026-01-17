@@ -95,6 +95,8 @@ Examples:
 | `-O, --output-file` | Output file path for CSV/XLSX (default: unset). |
 | `--export-gpx` | Export matched segments as GPX (default: off). |
 | `--export-gpx-file` | Base name for exported GPX files (default: `matched_segments.gpx`). |
+| `--export-unmatched-gpx` | Export unmatched recorded segments as a single GPX with multiple tracks (default: off). |
+| `--export-unmatched-gpx-file` | Output GPX file for unmatched segments (default: `unmatched_segments.gpx`). |
 | `--dump-candidates-gpx` | Dump bbox-filtered candidates with placeholders `{ref}`, `{run}`, `{rs}`, `{re}`, `{n}` (default: off). |
 | `--group-by-segment` | Group output by segment name (default: off; default output sorted by start index). |
 

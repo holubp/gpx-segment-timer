@@ -1290,6 +1290,30 @@ def export_match_bundle(match: Dict[str, Any],
         f.write(gpx.to_xml())
     logging.info("Exported matched segments to GPX file: %s", output_gpx)
 
+def export_unmatched_segments(recorded_points: List[Dict[str, Any]],
+                              unmatched_windows: List[Tuple[int, int]],
+                              recorded_filename: str,
+                              output_gpx: str) -> None:
+    """
+    Export unmatched recorded windows as a single GPX with multiple tracks.
+    """
+    gpx = gpxpy.gpx.GPX()
+
+    for idx, (start_idx, end_idx) in enumerate(unmatched_windows, start=1):
+        if end_idx - start_idx < 2:
+            continue
+        track = gpxpy.gpx.GPXTrack()
+        track.name = f"unmatched {idx}: {os.path.basename(recorded_filename)} [{start_idx},{end_idx})"
+        segment = gpxpy.gpx.GPXTrackSegment()
+        for pt in recorded_points[start_idx:end_idx]:
+            segment.points.append(gpxpy.gpx.GPXTrackPoint(pt["lat"], pt["lon"], time=pt.get("time")))
+        track.segments.append(segment)
+        gpx.tracks.append(track)
+
+    with open(output_gpx, "w", encoding="utf-8") as f:
+        f.write(gpx.to_xml())
+    logging.info("Exported unmatched segments to GPX file: %s", output_gpx)
+
 def output_results(results: List[Dict[str, Any]],
                    output_mode: str,
                    output_file: Optional[str]) -> None:
@@ -1544,6 +1568,10 @@ def main() -> None:
                         help="Export matched segments as individual GPX tracks.")
     parser.add_argument("--export-gpx-file", default="matched_segments.gpx",
                         help="Output GPX file for exporting matched segments.")
+    parser.add_argument("--export-unmatched-gpx", action="store_true",
+                        help="Export unmatched recorded segments as a single GPX with multiple tracks.")
+    parser.add_argument("--export-unmatched-gpx-file", default="unmatched_segments.gpx",
+                        help="Output GPX file for exporting unmatched recorded segments.")
     parser.add_argument("--dump-candidates-gpx", default=None,
                         help="If set, dumps per start-bbox run the candidate segments (after bbox filters) into GPX files. Use placeholders {ref}, {run}, {rs}, {re}, {n}.")
     parser.add_argument("--group-by-segment", action="store_true",
@@ -1597,6 +1625,7 @@ def main() -> None:
         log_config(adjusted, "Post-load")
 
     results: List[Dict[str, Any]] = []
+    all_accepted_windows: List[Tuple[int, int]] = []
     for seg_filename, ref_points in ref_segments.items():
         logging.info("Processing reference segment: %s", seg_filename)
         if not ref_points:
@@ -2145,6 +2174,7 @@ def main() -> None:
                     break
             else:
                 accepted_windows.append((final_start, final_end))
+                all_accepted_windows.append((final_start, final_end))
                 match_num = len(results) + 1
                 result = {
                     "match_num": match_num,
@@ -2193,6 +2223,36 @@ def main() -> None:
         output_results(results, args.output_mode, args.output_file)
     else:
         logging.info("No matching segments detected in the recorded track.")
+
+    if args.export_unmatched_gpx:
+        n_points = len(recorded_points)
+        unmatched_windows: List[Tuple[int, int]] = []
+        if all_accepted_windows:
+            all_accepted_windows.sort()
+            merged: List[List[int]] = []
+            for s, e in all_accepted_windows:
+                if not merged or s > merged[-1][1]:
+                    merged.append([s, e])
+                else:
+                    merged[-1][1] = max(merged[-1][1], e)
+            cursor = 0
+            for s, e in merged:
+                if cursor < s:
+                    unmatched_windows.append((cursor, s))
+                cursor = max(cursor, e)
+            if cursor < n_points:
+                unmatched_windows.append((cursor, n_points))
+        else:
+            unmatched_windows.append((0, n_points))
+        if unmatched_windows:
+            export_unmatched_segments(
+                recorded_points,
+                unmatched_windows,
+                args.recorded,
+                args.export_unmatched_gpx_file,
+            )
+        else:
+            logging.info("No unmatched segments to export.")
 
 if __name__ == "__main__":
     main()
