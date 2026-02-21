@@ -130,6 +130,7 @@
 - Commit history uses short, descriptive, lowercase messages (e.g., "reworked docs", "more robust segment detection").
 - PRs should include a concise summary, the exact command(s) used for verification, and sample output if behavior changes.
 - If new flags or outputs are added, update `README.md` with usage and examples.
+- After code changes are finalized and approved/reviewed, documentation must be synchronized in the same delivery (at minimum `README.md`, and `AGENTS.md` when behavior/spec changes).
 - New versions must be tested on reference data and verified that it does not compromise performance 
 
 ## Configuration & Data Tips

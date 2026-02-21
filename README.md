@@ -8,27 +8,36 @@ GPX Segment Timer is a Python CLI that measures elapsed time on reference GPX se
 
 The matcher uses a multi-stage pipeline that is translation-tolerant but spatially bounded:
 
-1) **Coarse candidate selection**
+1) **Reference mode selection (auto per GPX)**
+   - `shape` mode when no start/finish markers are present.
+   - `point`, `line`, or `hybrid` mode when markers are present.
+   - Marker labels are read from `name`, then `desc/description`, then `cmt/comment`.
+
+2) **Coarse candidate selection (shape mode)**
    - Finds recorded points near the reference start/end using endpoint and overall bounding boxes.
    - Generates candidate windows using cumulative distance with a `--candidate-margin` tolerance.
    - Optional envelope/polylinedistance prefilters prune candidates that drift beyond GPS error bounds.
 
-2) **Shape matching (DTW)**
+3) **Shape matching (DTW, shape mode)**
    - Compares candidate windows to the reference using DTW on translation-invariant shape sequences.
    - Shape modes: step vectors, heading, or centered coordinates.
 
-3) **Boundary refinement**
+4) **Boundary refinement (shape mode)**
    - DTW warping path anchoring, iterative grid search, and endpoint refinement.
 
-4) **Start/finish line crossings**
+5) **Start/finish crossings**
    - Start/finish lines are perpendicular to the first/last segment vectors.
    - Lines are finite segments (default total length 8m) and can be tuned.
    - Crossing points are interpolated between bracket points.
+   - In marker modes:
+     - Point mode starts on leaving start circle and ends on entering finish circle.
+     - Line mode starts/ends on explicit start/finish line crossings.
+     - Hybrid mode enforces marker point + line constraints.
 
-5) **Crossing disambiguation by shape**
+6) **Crossing disambiguation by shape (shape mode)**
    - When lines intersect multiple times (tight kinks near the start/finish), local and full-segment shape matching disambiguate the correct crossings.
 
-6) **Output + GPX export**
+7) **Output + GPX export**
    - Emits results to stdout/CSV/XLSX.
    - Optional GPX export includes matched window, reference segment, start/finish lines, and crossing points (with interpolation annotations).
 
@@ -83,6 +92,30 @@ Examples:
 
 ---
 
+## Reference Marker Modes
+
+Marker modes are selected automatically per reference GPX file and bypass DTW shape discovery for that file.
+
+- Point mode:
+  - Requires marker points `start` and `finish`.
+  - Uses virtual circles around markers (default 10m radius).
+  - Match starts when recorded track leaves start circle.
+  - Match ends when recorded track enters finish circle.
+- Line mode:
+  - Requires `start` and `finish` lines (2 points each) as named tracks/routes.
+  - Match starts/ends on crossing these explicit lines.
+- Hybrid mode:
+  - Enabled when both point and line markers are present.
+  - Applies point constraints and line constraints together.
+- Trap points:
+  - Any marker point named `trap*` creates additional consecutive subsegments:
+    `start->trap1`, `trap1->trap2`, ..., `trapN->finish`.
+
+Marker labels can be defined in GPX `name`, `desc/description`, or `cmt/comment`.
+This supports marker-only references like `segments/semmering.gpx` with waypoint descriptions.
+
+---
+
 ## Advanced Options
 
 ### Input / Output
@@ -108,6 +141,7 @@ Examples:
 
 | Method | Purpose | Pros | Cons | Default |
 |--------|---------|------|------|---------|
+| Marker reference mode | Marker-driven matching for point/line/hybrid refs. | No DTW needed for markerized refs; good for start/finish-only definitions. | Depends on correct marker labels and geometry. | Auto on when a reference contains start/finish markers. |
 | Overall bbox | Fast spatial prune of impossible refs. | Very cheap. | Can miss if bbox margin too small. | On (derived from `--bbox-margin`). |
 | Envelope prefilter | Enforce max distance to reference polyline. | Strong drift guard. | Can drop true matches when GPS offset is large. | On if `--envelope-max-m > 0` (preset). |
 | Strict envelope window | Sliding window drift guard. | Catches local detours. | Sensitive to window size. | On in presets (`--strict-envelope-window-m`). |
@@ -136,6 +170,19 @@ Examples:
 | `--prefilter-xtrack-p95-m` | Enable x-track p95 prefilter (meters); negative disables (default `-1.0`, off). |
 | `--prefilter-xtrack-max-m` | Enable x-track max prefilter (meters); negative disables (default `-1.0`, off). |
 | `--prefilter-xtrack-samples` | Sample count for x-track prefilter (default `80`; applies to p95/max). |
+
+#### Reference Marker Modes
+
+| Option | Description |
+|--------|-------------|
+| `--marker-circle-m` | Default virtual circle radius (meters) for point mode markers (default `10.0`). |
+| `--marker-start-circle-m` | Start circle radius (meters); negative uses `--marker-circle-m` (default `-1.0`, fallback on). |
+| `--marker-finish-circle-m` | Finish circle radius (meters); negative uses `--marker-circle-m` (default `-1.0`, fallback on). |
+| `--marker-trap-circle-m` | Trap circle radius (meters); negative uses `--marker-circle-m` (default `-1.0`, fallback on). |
+
+Markerized references are auto-detected and can use:
+- Waypoints or point markers named `start`, `finish`, `trap*`.
+- Named tracks/routes `start` and `finish` with exactly 2 points each (line mode).
 
 #### DTW + Shape Matching
 
@@ -208,7 +255,18 @@ Examples:
 
 ## Examples
 
-### Basic matching
+### Basic matching (shape mode references in `segments/`)
+
+Included shape-mode references include:
+- `segments/automotodrom-okruh-offroad-les.gpx`
+- `segments/automotodrom-okruh-offroad-adv.gpx`
+- `segments/automotodrom-okruh-offroad.gpx`
+- `segments/Jinacovice-vnejsi-dlouhy.gpx`
+- `segments/Jinacovice-vnejsi-kratky.gpx`
+- `segments/Jinacovice-vnejsi-stredni.gpx`
+- `segments/Jinacovice-vnitrni-kratky.gpx`
+- `segments/Jinacovice-vnitrni-stredni.gpx`
+- `segments/Jinacovice-vnitrni-kratky-2x.gpx`
 
 ```
 ./gpx-segment-timer.py -v -f segments -r example.gpx
@@ -219,6 +277,22 @@ Examples:
 ```
 ./gpx-segment-timer.py -v -f segments -r example.gpx \
   --export-gpx --export-gpx-file matched_segments.gpx
+```
+
+### Marker point mode (`segments/semmering.gpx`, including `desc`/`cmt` labels)
+
+`segments/semmering.gpx` is a marker-only reference (no shape track points). It is matched in point mode.
+
+```
+./gpx-segment-timer.py -v -f segments -r 21558926845.gpx \
+  --marker-circle-m 10
+```
+
+### Marker point mode with per-role circle radii
+
+```
+./gpx-segment-timer.py -v -f segments -r 21558926845.gpx \
+  --marker-start-circle-m 8 --marker-finish-circle-m 12 --marker-trap-circle-m 10
 ```
 
 ### Tight line width for kink-heavy finishes

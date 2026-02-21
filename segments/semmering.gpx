@@ -1,0 +1,15 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<gpx version="1.1" creator="JOSM GPX export" xmlns="http://www.topografix.com/GPX/1/1"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
+  <metadata>
+    <time>2026-02-21T09:57:31.168665600Z</time>
+    <bounds minlat="47.6228267" minlon="15.8309595" maxlat="47.6305257" maxlon="15.8335009"/>
+  </metadata>
+  <wpt lat="47.622826667467585" lon="15.833500920385124">
+    <desc>finish</desc>
+  </wpt>
+  <wpt lat="47.63052565136813" lon="15.830959527343516">
+    <desc>start</desc>
+  </wpt>
+</gpx>
