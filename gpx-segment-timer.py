@@ -164,19 +164,196 @@ def load_gpx_points(filepath: str) -> List[Dict[str, Any]]:
     logging.debug("Loaded %d points from %s.", len(points), filepath)
     return points
 
-def load_reference_segments(folder: str) -> Dict[str, List[Dict[str, Any]]]:
-    """Load all GPX files from the specified folder as reference segments."""
-    segments: Dict[str, List[Dict[str, Any]]] = {}
+def _normalize_marker_name(name: Optional[str]) -> str:
+    if not name:
+        return ""
+    return name.strip().lower()
+
+
+def _extract_marker_label(obj: Any) -> str:
+    """
+    Extract marker label from GPX entities using common fields.
+    Priority: name -> description/desc -> comment/cmt.
+    """
+    raw = getattr(obj, "name", None)
+    if not raw:
+        raw = getattr(obj, "description", None)
+    if not raw:
+        raw = getattr(obj, "desc", None)
+    if not raw:
+        raw = getattr(obj, "comment", None)
+    if not raw:
+        raw = getattr(obj, "cmt", None)
+    return _normalize_marker_name(raw)
+
+
+def _point_record(lat: float, lon: float, time_val: Any = None) -> Dict[str, Any]:
+    return {"lat": lat, "lon": lon, "time": time_val}
+
+
+def _flatten_track_points_from_gpx(gpx: Any) -> List[Dict[str, Any]]:
+    points: List[Dict[str, Any]] = []
+    for track in gpx.tracks:
+        for segment in track.segments:
+            for point in segment.points:
+                points.append(_point_record(point.latitude, point.longitude, point.time))
+    return points
+
+
+def _extract_named_marker_points(gpx: Any) -> Tuple[List[Tuple[str, Dict[str, Any], int]], List[str]]:
+    markers: List[Tuple[str, Dict[str, Any], int]] = []
+    warnings: List[str] = []
+    order = 0
+
+    for wp in gpx.waypoints:
+        mname = _extract_marker_label(wp)
+        if mname in ("start", "finish") or mname.startswith("trap"):
+            markers.append((mname, _point_record(wp.latitude, wp.longitude, wp.time), order))
+        elif mname:
+            warnings.append(f"ignored named point '{mname}' (not start/finish/trap*)")
+        order += 1
+
+    for route in gpx.routes:
+        for pt in route.points:
+            mname = _extract_marker_label(pt)
+            if mname in ("start", "finish") or mname.startswith("trap"):
+                markers.append((mname, _point_record(pt.latitude, pt.longitude, getattr(pt, "time", None)), order))
+            elif mname:
+                warnings.append(f"ignored named point '{mname}' (not start/finish/trap*)")
+            order += 1
+
+    for track in gpx.tracks:
+        for seg in track.segments:
+            for pt in seg.points:
+                mname = _extract_marker_label(pt)
+                if mname in ("start", "finish") or mname.startswith("trap"):
+                    markers.append((mname, _point_record(pt.latitude, pt.longitude, getattr(pt, "time", None)), order))
+                elif mname:
+                    warnings.append(f"ignored named point '{mname}' (not start/finish/trap*)")
+                order += 1
+    return markers, warnings
+
+
+def _extract_named_lines(gpx: Any) -> Tuple[Dict[str, Tuple[Dict[str, Any], Dict[str, Any]]], List[str]]:
+    lines: Dict[str, Tuple[Dict[str, Any], Dict[str, Any]]] = {}
+    warnings: List[str] = []
+
+    def extract_points(container: Any) -> List[Dict[str, Any]]:
+        pts: List[Dict[str, Any]] = []
+        if hasattr(container, "segments"):
+            for seg in container.segments:
+                for pt in seg.points:
+                    pts.append(_point_record(pt.latitude, pt.longitude, getattr(pt, "time", None)))
+        elif hasattr(container, "points"):
+            for pt in container.points:
+                pts.append(_point_record(pt.latitude, pt.longitude, getattr(pt, "time", None)))
+        return pts
+
+    for track in gpx.tracks:
+        name = _extract_marker_label(track)
+        pts = extract_points(track)
+        if name in ("start", "finish"):
+            if len(pts) == 2:
+                if name in lines:
+                    warnings.append(f"duplicate named line '{name}' found; using first definition")
+                else:
+                    lines[name] = (pts[0], pts[1])
+            else:
+                warnings.append(f"named line '{name}' must contain exactly 2 points, got {len(pts)}")
+        elif name:
+            warnings.append(f"ignored named line '{name}' (not start/finish, points={len(pts)})")
+
+    for route in gpx.routes:
+        name = _extract_marker_label(route)
+        pts = extract_points(route)
+        if name in ("start", "finish"):
+            if len(pts) == 2:
+                if name in lines:
+                    warnings.append(f"duplicate named line '{name}' found; using first definition")
+                else:
+                    lines[name] = (pts[0], pts[1])
+            else:
+                warnings.append(f"named line '{name}' must contain exactly 2 points, got {len(pts)}")
+        elif name:
+            warnings.append(f"ignored named line '{name}' (not start/finish, points={len(pts)})")
+    return lines, warnings
+
+
+def _resolve_marker_radius(base_radius_m: float, specific_radius_m: float) -> float:
+    radius = specific_radius_m if specific_radius_m >= 0 else base_radius_m
+    return max(0.1, float(radius))
+
+
+def _window_overlap(a_start: int, a_end: int, b_start: int, b_end: int) -> int:
+    return max(0, min(a_end, b_end) - max(a_start, b_start))
+
+
+def load_reference_definitions(folder: str) -> Dict[str, Dict[str, Any]]:
+    """Load all GPX references with auto-detected shape/point/line/hybrid modes."""
+    segments: Dict[str, Dict[str, Any]] = {}
     if not os.path.isdir(folder):
         raise ValueError(f"Reference folder '{folder}' is not a valid directory.")
     for filename in os.listdir(folder):
         if filename.lower().endswith('.gpx'):
             filepath = os.path.join(folder, filename)
             log_gpx_input_stats(filepath, f"Reference {filename}")
-            pts = load_gpx_points(filepath)
-            if pts:
-                segments[filename] = pts
-                logging.debug("Loaded reference segment '%s' with %d points.", filename, len(pts))
+            with open(filepath, "r", encoding="utf-8") as f:
+                gpx = gpxpy.parse(f)
+            shape_points = _flatten_track_points_from_gpx(gpx)
+            named_markers, marker_warnings = _extract_named_marker_points(gpx)
+            named_lines, line_warnings = _extract_named_lines(gpx)
+
+            start_points = [(pt, order) for (name, pt, order) in named_markers if name == "start"]
+            finish_points = [(pt, order) for (name, pt, order) in named_markers if name == "finish"]
+            trap_points = [(name, pt, order) for (name, pt, order) in named_markers if name.startswith("trap")]
+            trap_points.sort(key=lambda x: x[2])
+
+            warnings = marker_warnings + line_warnings
+            start_point = start_points[0][0] if start_points else None
+            finish_point = finish_points[0][0] if finish_points else None
+            if len(start_points) > 1:
+                warnings.append(f"multiple 'start' points found ({len(start_points)}); using first")
+            if len(finish_points) > 1:
+                warnings.append(f"multiple 'finish' points found ({len(finish_points)}); using first")
+
+            has_marker_hint = bool(start_points or finish_points or "start" in named_lines or "finish" in named_lines)
+            has_points = start_point is not None and finish_point is not None
+            has_lines = "start" in named_lines and "finish" in named_lines
+
+            if has_marker_hint:
+                if has_points and has_lines:
+                    mode = "hybrid"
+                elif has_points:
+                    mode = "point"
+                elif has_lines:
+                    mode = "line"
+                else:
+                    mode = "marker_invalid"
+            else:
+                mode = "shape"
+
+            ref_def = {
+                "filename": filename,
+                "filepath": filepath,
+                "mode": mode,
+                "shape_points": shape_points,
+                "start_point": start_point,
+                "finish_point": finish_point,
+                "trap_points": trap_points,
+                "start_line": named_lines.get("start"),
+                "finish_line": named_lines.get("finish"),
+                "warnings": warnings,
+            }
+            if mode == "shape" and not shape_points:
+                continue
+            if mode != "shape" and mode != "marker_invalid" and not shape_points:
+                # Keep marker-only references valid even if they do not include a shape track.
+                ref_def["shape_points"] = []
+            segments[filename] = ref_def
+            logging.debug(
+                "Loaded reference '%s' mode=%s shape_points=%d traps=%d",
+                filename, mode, len(ref_def["shape_points"]), len(trap_points)
+            )
     return segments
 
 def compute_total_distance(points: List[Dict[str, Any]]) -> float:
@@ -518,6 +695,345 @@ def find_line_crossings(recorded_points: List[Dict[str, Any]],
                 "interp": True,
             })
     return crossings
+
+
+def _circle_crossing(recorded_points: List[Dict[str, Any]],
+                     center: Tuple[float, float],
+                     radius_m: float,
+                     idx0: int,
+                     idx1: int) -> Dict[str, Any]:
+    p0 = recorded_points[idx0]
+    p1 = recorded_points[idx1]
+    d0 = haversine_distance((p0["lat"], p0["lon"]), center) - radius_m
+    d1 = haversine_distance((p1["lat"], p1["lon"]), center) - radius_m
+    denom = d0 - d1
+    if abs(denom) < 1e-9:
+        t = 0.5
+    else:
+        t = d0 / denom
+    t = max(0.0, min(1.0, t))
+    lat = p0["lat"] + (p1["lat"] - p0["lat"]) * t
+    lon = p0["lon"] + (p1["lon"] - p0["lon"]) * t
+    time0 = p0.get("time")
+    time1 = p1.get("time")
+    interp_time = None
+    if time0 and time1:
+        interp_time = time0 + (time1 - time0) * t
+    return {
+        "idx0": idx0,
+        "idx1": idx1,
+        "lat": lat,
+        "lon": lon,
+        "time": interp_time,
+        "interp": True,
+    }
+
+
+def _prefix_counts(flags: List[bool]) -> List[int]:
+    pref = [0] * (len(flags) + 1)
+    for i, flag in enumerate(flags, start=1):
+        pref[i] = pref[i - 1] + (1 if flag else 0)
+    return pref
+
+
+def _count_true(pref: List[int], start_idx: int, end_idx_exclusive: int) -> int:
+    if end_idx_exclusive <= start_idx:
+        return 0
+    return pref[end_idx_exclusive] - pref[start_idx]
+
+
+def _find_point_pair_matches(recorded_points: List[Dict[str, Any]],
+                             start_center: Tuple[float, float],
+                             finish_center: Tuple[float, float],
+                             start_radius_m: float,
+                             finish_radius_m: float) -> List[Tuple[int, int, Dict[str, Any], Dict[str, Any], float, float]]:
+    n = len(recorded_points)
+    if n < 2:
+        return []
+    inside_start = [
+        haversine_distance((pt["lat"], pt["lon"]), start_center) <= start_radius_m
+        for pt in recorded_points
+    ]
+    inside_finish = [
+        haversine_distance((pt["lat"], pt["lon"]), finish_center) <= finish_radius_m
+        for pt in recorded_points
+    ]
+    pref_start = _prefix_counts(inside_start)
+    pref_finish = _prefix_counts(inside_finish)
+
+    start_leave: List[Dict[str, Any]] = []
+    finish_enter: List[Dict[str, Any]] = []
+    for i in range(n - 1):
+        if inside_start[i] and not inside_start[i + 1]:
+            start_leave.append(_circle_crossing(recorded_points, start_center, start_radius_m, i, i + 1))
+        if (not inside_finish[i]) and inside_finish[i + 1]:
+            finish_enter.append(_circle_crossing(recorded_points, finish_center, finish_radius_m, i, i + 1))
+
+    matches: List[Tuple[int, int, Dict[str, Any], Dict[str, Any], float, float]] = []
+    if not start_leave or not finish_enter:
+        return matches
+
+    finish_i = 0
+    next_allowed_start = 0
+    for s_cross in start_leave:
+        s_idx = s_cross["idx1"]
+        if s_idx < next_allowed_start:
+            continue
+        while finish_i < len(finish_enter) and finish_enter[finish_i]["idx1"] <= s_idx:
+            finish_i += 1
+        k = finish_i
+        chosen = None
+        while k < len(finish_enter):
+            e_cross = finish_enter[k]
+            e0 = e_cross["idx0"]
+            if _count_true(pref_start, s_idx, e0 + 1) > 0:
+                # Re-entered the start circle before reaching finish; invalidate this start event.
+                break
+            if _count_true(pref_finish, s_idx, e0) > 0:
+                # Already entered finish earlier; keep the first valid entry only.
+                break
+            chosen = e_cross
+            break
+        if chosen is None:
+            continue
+        end_idx = min(n, chosen["idx1"] + 1)
+        if end_idx <= s_idx:
+            continue
+        s_boundary = abs(haversine_distance((s_cross["lat"], s_cross["lon"]), start_center) - start_radius_m)
+        e_boundary = abs(haversine_distance((chosen["lat"], chosen["lon"]), finish_center) - finish_radius_m)
+        matches.append((s_idx, end_idx, s_cross, chosen, s_boundary, e_boundary))
+        next_allowed_start = end_idx
+    return matches
+
+
+def _line_geometry(line_pts: Tuple[Dict[str, Any], Dict[str, Any]]) -> Tuple[Tuple[float, float], Tuple[float, float], float, float]:
+    p0, p1 = line_pts
+    anchor = ((p0["lat"] + p1["lat"]) / 2.0, (p0["lon"] + p1["lon"]) / 2.0)
+    lat_scale = anchor[0]
+    x0, y0 = _point_to_xy(p0["lat"], p0["lon"], anchor, lat_scale)
+    x1, y1 = _point_to_xy(p1["lat"], p1["lon"], anchor, lat_scale)
+    dx = x1 - x0
+    dy = y1 - y0
+    half_len = 0.5 * math.hypot(dx, dy)
+    norm = math.hypot(dx, dy)
+    if norm == 0:
+        normal = (1.0, 0.0)
+    else:
+        # Normal perpendicular to the line direction.
+        normal = (dy / norm, -dx / norm)
+    return anchor, normal, lat_scale, half_len
+
+
+def _distance_to_line(point: Tuple[float, float],
+                      anchor: Tuple[float, float],
+                      normal: Tuple[float, float],
+                      lat_scale: float) -> float:
+    x, y = _point_to_xy(point[0], point[1], anchor, lat_scale)
+    return abs(x * normal[0] + y * normal[1])
+
+
+def _find_line_mode_matches(recorded_points: List[Dict[str, Any]],
+                            start_line: Tuple[Dict[str, Any], Dict[str, Any]],
+                            finish_line: Tuple[Dict[str, Any], Dict[str, Any]]) -> List[Tuple[int, int, Dict[str, Any], Dict[str, Any], float, float]]:
+    n = len(recorded_points)
+    if n < 2:
+        return []
+    s_anchor, s_normal, s_lat_scale, s_half_len = _line_geometry(start_line)
+    e_anchor, e_normal, e_lat_scale, e_half_len = _line_geometry(finish_line)
+    start_crossings = find_line_crossings(recorded_points, s_anchor, s_normal, 0, n - 1, s_lat_scale, s_half_len)
+    finish_crossings = find_line_crossings(recorded_points, e_anchor, e_normal, 0, n - 1, e_lat_scale, e_half_len)
+    if not start_crossings or not finish_crossings:
+        return []
+
+    matches: List[Tuple[int, int, Dict[str, Any], Dict[str, Any], float, float]] = []
+    next_allowed_start = 0
+    f_idx = 0
+    s_idx = 0
+    while s_idx < len(start_crossings):
+        sc = start_crossings[s_idx]
+        s_point_idx = sc["idx1"]
+        if s_point_idx < next_allowed_start:
+            s_idx += 1
+            continue
+        while f_idx < len(finish_crossings) and finish_crossings[f_idx]["idx0"] <= s_point_idx:
+            f_idx += 1
+        if f_idx >= len(finish_crossings):
+            break
+        ec = finish_crossings[f_idx]
+        # Start line must not be crossed again before finish.
+        next_start_before_finish = None
+        for i in range(s_idx + 1, len(start_crossings)):
+            if start_crossings[i]["idx0"] < ec["idx0"]:
+                next_start_before_finish = i
+                break
+            if start_crossings[i]["idx0"] >= ec["idx0"]:
+                break
+        if next_start_before_finish is not None:
+            s_idx = next_start_before_finish
+            continue
+
+        end_idx = min(n, ec["idx1"] + 1)
+        if end_idx > s_point_idx:
+            s_line_err = _distance_to_line((sc["lat"], sc["lon"]), s_anchor, s_normal, s_lat_scale)
+            e_line_err = _distance_to_line((ec["lat"], ec["lon"]), e_anchor, e_normal, e_lat_scale)
+            matches.append((s_point_idx, end_idx, sc, ec, s_line_err, e_line_err))
+            next_allowed_start = end_idx
+        s_idx += 1
+    return matches
+
+
+def _build_point_mode_variants(seg_filename: str,
+                               start_point: Dict[str, Any],
+                               finish_point: Dict[str, Any],
+                               trap_points: List[Tuple[str, Dict[str, Any], int]],
+                               start_radius_m: float,
+                               finish_radius_m: float,
+                               trap_radius_m: float) -> List[Dict[str, Any]]:
+    variants: List[Dict[str, Any]] = []
+    variants.append({
+        "segment_name": seg_filename,
+        "pair_label": "start->finish",
+        "start_center": (start_point["lat"], start_point["lon"]),
+        "finish_center": (finish_point["lat"], finish_point["lon"]),
+        "start_radius_m": start_radius_m,
+        "finish_radius_m": finish_radius_m,
+        "is_full": True,
+    })
+    if trap_points:
+        chain: List[Tuple[str, Dict[str, Any], float]] = [("start", start_point, start_radius_m)]
+        for trap_name, trap_point, _ in trap_points:
+            chain.append((trap_name, trap_point, trap_radius_m))
+        chain.append(("finish", finish_point, finish_radius_m))
+        for idx in range(len(chain) - 1):
+            left_name, left_point, left_radius = chain[idx]
+            right_name, right_point, right_radius = chain[idx + 1]
+            pair_label = f"{left_name}->{right_name}"
+            segment_name = f"{seg_filename}:{pair_label}"
+            variants.append({
+                "segment_name": segment_name,
+                "pair_label": pair_label,
+                "start_center": (left_point["lat"], left_point["lon"]),
+                "finish_center": (right_point["lat"], right_point["lon"]),
+                "start_radius_m": left_radius,
+                "finish_radius_m": right_radius,
+                "is_full": False,
+            })
+    return variants
+
+
+def find_marker_mode_matches(recorded_points: List[Dict[str, Any]],
+                             ref_def: Dict[str, Any],
+                             args: Any,
+                             seg_filename: str) -> List[Dict[str, Any]]:
+    mode = ref_def.get("mode", "shape")
+    if mode not in ("point", "line", "hybrid"):
+        return []
+
+    base_marker_radius = max(0.1, float(args.marker_circle_m))
+    start_radius = _resolve_marker_radius(base_marker_radius, float(args.marker_start_circle_m))
+    finish_radius = _resolve_marker_radius(base_marker_radius, float(args.marker_finish_circle_m))
+    trap_radius = _resolve_marker_radius(base_marker_radius, float(args.marker_trap_circle_m))
+    shape_points = ref_def.get("shape_points", [])
+    ref_shape_distance = compute_total_distance(shape_points) if len(shape_points) >= 2 else 0.0
+
+    point_candidates: List[Dict[str, Any]] = []
+    start_point = ref_def.get("start_point")
+    finish_point = ref_def.get("finish_point")
+    trap_points = ref_def.get("trap_points", [])
+    if mode in ("point", "hybrid") and start_point and finish_point:
+        for variant in _build_point_mode_variants(
+            seg_filename,
+            start_point,
+            finish_point,
+            trap_points,
+            start_radius,
+            finish_radius,
+            trap_radius,
+        ):
+            raw_matches = _find_point_pair_matches(
+                recorded_points,
+                variant["start_center"],
+                variant["finish_center"],
+                variant["start_radius_m"],
+                variant["finish_radius_m"],
+            )
+            for (s_idx, e_idx, s_cross, e_cross, s_err, e_err) in raw_matches:
+                point_candidates.append({
+                    "segment_name": variant["segment_name"],
+                    "pair_label": variant["pair_label"],
+                    "start_index": s_idx,
+                    "end_index": e_idx,
+                    "start_crossing": s_cross,
+                    "end_crossing": e_cross,
+                    "start_diff": s_err,
+                    "end_diff": e_err,
+                    "ref_start_coords": variant["start_center"],
+                    "ref_end_coords": variant["finish_center"],
+                    "ref_distance": ref_shape_distance if variant["is_full"] and ref_shape_distance > 0 else haversine_distance(
+                        variant["start_center"], variant["finish_center"]
+                    ),
+                    "dtw_avg": 0.0,
+                    "mode_kind": "point",
+                    "start_line": None,
+                    "finish_line": None,
+                })
+
+    line_candidates: List[Dict[str, Any]] = []
+    start_line = ref_def.get("start_line")
+    finish_line = ref_def.get("finish_line")
+    if mode in ("line", "hybrid") and start_line and finish_line:
+        s_anchor = ((start_line[0]["lat"] + start_line[1]["lat"]) / 2.0, (start_line[0]["lon"] + start_line[1]["lon"]) / 2.0)
+        e_anchor = ((finish_line[0]["lat"] + finish_line[1]["lat"]) / 2.0, (finish_line[0]["lon"] + finish_line[1]["lon"]) / 2.0)
+        raw_line_matches = _find_line_mode_matches(recorded_points, start_line, finish_line)
+        for (s_idx, e_idx, s_cross, e_cross, s_err, e_err) in raw_line_matches:
+            line_candidates.append({
+                "segment_name": seg_filename,
+                "pair_label": "start->finish(line)",
+                "start_index": s_idx,
+                "end_index": e_idx,
+                "start_crossing": s_cross,
+                "end_crossing": e_cross,
+                "start_diff": s_err,
+                "end_diff": e_err,
+                "ref_start_coords": s_anchor,
+                "ref_end_coords": e_anchor,
+                "ref_distance": ref_shape_distance if ref_shape_distance > 0 else haversine_distance(s_anchor, e_anchor),
+                "dtw_avg": 0.0,
+                "mode_kind": "line",
+                "start_line": start_line,
+                "finish_line": finish_line,
+            })
+
+    if mode == "point":
+        return point_candidates
+    if mode == "line":
+        return line_candidates
+
+    # hybrid: point mode with additional line gate for full start->finish windows
+    if not point_candidates or not line_candidates:
+        return []
+    hybrid_matches: List[Dict[str, Any]] = []
+    for candidate in point_candidates:
+        pair_label = candidate.get("pair_label", "")
+        if pair_label != "start->finish":
+            hybrid_matches.append(candidate)
+            continue
+        best_overlap = 0
+        best_line: Optional[Dict[str, Any]] = None
+        for line_c in line_candidates:
+            overlap = _window_overlap(
+                candidate["start_index"], candidate["end_index"],
+                line_c["start_index"], line_c["end_index"],
+            )
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_line = line_c
+        if best_line is None or best_overlap <= 0:
+            continue
+        candidate["start_line"] = best_line.get("start_line")
+        candidate["finish_line"] = best_line.get("finish_line")
+        hybrid_matches.append(candidate)
+    return hybrid_matches
 
 def compute_bounding_box(points: List[Dict[str, Any]]) -> Tuple[float, float, float, float]:
     """Compute the bounding box (min_lat, max_lat, min_lon, max_lon) for a set of points."""
@@ -1205,7 +1721,9 @@ def export_match_bundle(match: Dict[str, Any],
                         output_gpx: str,
                         bbox_margin: float,
                         match_num: int,
-                        line_length_m: float) -> None:
+                        line_length_m: float,
+                        start_line_points: Optional[Tuple[Dict[str, Any], Dict[str, Any]]] = None,
+                        finish_line_points: Optional[Tuple[Dict[str, Any], Dict[str, Any]]] = None) -> None:
     """
     Export a single matched segment with reference, start/finish lines, and crossings.
     """
@@ -1229,14 +1747,26 @@ def export_match_bundle(match: Dict[str, Any],
     ]
     add_track(recorded_track_name, recorded_pts)
 
-    ref_track_name = f"reference: {ref_filename}"
-    ref_pts = [
-        gpxpy.gpx.GPXTrackPoint(pt["lat"], pt["lon"], time=pt.get("time"))
-        for pt in ref_points
-    ]
-    add_track(ref_track_name, ref_pts)
+    if ref_points:
+        ref_track_name = f"reference: {ref_filename}"
+        ref_pts = [
+            gpxpy.gpx.GPXTrackPoint(pt["lat"], pt["lon"], time=pt.get("time"))
+            for pt in ref_points
+        ]
+        add_track(ref_track_name, ref_pts)
 
-    if len(ref_points) >= 2:
+    if start_line_points and finish_line_points:
+        add_track(
+            f"start line: {ref_filename}",
+            [gpxpy.gpx.GPXTrackPoint(start_line_points[0]["lat"], start_line_points[0]["lon"]),
+             gpxpy.gpx.GPXTrackPoint(start_line_points[1]["lat"], start_line_points[1]["lon"])],
+        )
+        add_track(
+            f"finish line: {ref_filename}",
+            [gpxpy.gpx.GPXTrackPoint(finish_line_points[0]["lat"], finish_line_points[0]["lon"]),
+             gpxpy.gpx.GPXTrackPoint(finish_line_points[1]["lat"], finish_line_points[1]["lon"])],
+        )
+    elif len(ref_points) >= 2:
         start_coords = (ref_points[0]["lat"], ref_points[0]["lon"])
         end_coords = (ref_points[-1]["lat"], ref_points[-1]["lon"])
         start_normal, _ = compute_line_normal(start_coords, (ref_points[1]["lat"], ref_points[1]["lon"]))
@@ -1549,6 +2079,14 @@ def main() -> None:
                         help="Minimum number of points for local crossing shape matching.")
     parser.add_argument("--line-length-m", type=float, default=8.0,
                         help="Start/finish line length in meters (total length, not half).")
+    parser.add_argument("--marker-circle-m", type=float, default=10.0,
+                        help="Default virtual circle radius (meters) for point marker mode.")
+    parser.add_argument("--marker-start-circle-m", type=float, default=-1.0,
+                        help="Start marker circle radius (meters); negative uses --marker-circle-m.")
+    parser.add_argument("--marker-finish-circle-m", type=float, default=-1.0,
+                        help="Finish marker circle radius (meters); negative uses --marker-circle-m.")
+    parser.add_argument("--marker-trap-circle-m", type=float, default=-1.0,
+                        help="Trap marker circle radius (meters); negative uses --marker-circle-m.")
     parser.add_argument("--crossing-length-weight", type=float, default=-1.0,
                         help="Weight for length error when selecting crossing pairs; negative enables auto-tuning.")
     parser.add_argument("--crossing-window-max", type=int, default=200,
@@ -1618,8 +2156,8 @@ def main() -> None:
         return
 
     logging.info("Loading reference segments from folder: %s", args.reference_folder)
-    ref_segments = load_reference_segments(args.reference_folder)
-    if not ref_segments:
+    ref_defs = load_reference_definitions(args.reference_folder)
+    if not ref_defs:
         logging.error("No valid reference GPX files found in: %s", args.reference_folder)
         return
 
@@ -1639,10 +2177,153 @@ def main() -> None:
 
     results: List[Dict[str, Any]] = []
     all_accepted_windows: List[Tuple[int, int]] = []
-    for seg_filename, ref_points in ref_segments.items():
+    for seg_filename, ref_def in ref_defs.items():
         logging.info("Processing reference segment: %s", seg_filename)
-        if not ref_points:
+        mode = ref_def.get("mode", "shape")
+        ref_points = ref_def.get("shape_points", [])
+        for warn_msg in ref_def.get("warnings", []):
+            logging.warning("Reference '%s': %s", seg_filename, warn_msg)
+        if mode == "marker_invalid":
+            logging.warning("Reference '%s' contains partial start/finish markers; skipping (shape mode disabled for markerized references).", seg_filename)
+            continue
+        if mode == "shape" and not ref_points:
             logging.warning("Reference segment %s has no points; skipping.", seg_filename)
+            continue
+        if mode != "shape":
+            if mode in ("point", "hybrid") and ref_def.get("start_point") and ref_def.get("finish_point"):
+                sp = ref_def["start_point"]
+                fp = ref_def["finish_point"]
+                logging.info(
+                    "Reference '%s' (%s) start point: (%.6f, %.6f), finish point: (%.6f, %.6f), traps=%d",
+                    seg_filename, mode, sp["lat"], sp["lon"], fp["lat"], fp["lon"], len(ref_def.get("trap_points", []))
+                )
+            if mode in ("line", "hybrid") and ref_def.get("start_line") and ref_def.get("finish_line"):
+                sl = ref_def["start_line"]
+                fl = ref_def["finish_line"]
+                logging.info(
+                    "Reference '%s' (%s) start line: ((%.6f, %.6f),(%.6f, %.6f)), finish line: ((%.6f, %.6f),(%.6f, %.6f))",
+                    seg_filename, mode,
+                    sl[0]["lat"], sl[0]["lon"], sl[1]["lat"], sl[1]["lon"],
+                    fl[0]["lat"], fl[0]["lon"], fl[1]["lat"], fl[1]["lon"],
+                )
+            marker_matches = find_marker_mode_matches(recorded_points, ref_def, args, seg_filename)
+            if not marker_matches:
+                logging.info("No matching segments found for reference '%s'.", seg_filename)
+                continue
+            accepted_windows: List[Tuple[int, int]] = []
+            if args.verbose:
+                marker_cfg = argparse.Namespace(
+                    ref_segment=seg_filename,
+                    marker_mode=mode,
+                    marker_circle_m=args.marker_circle_m,
+                    marker_start_circle_m=args.marker_start_circle_m,
+                    marker_finish_circle_m=args.marker_finish_circle_m,
+                    marker_trap_circle_m=args.marker_trap_circle_m,
+                )
+                log_config(marker_cfg, "Segment")
+            for candidate in marker_matches:
+                final_start = candidate["start_index"]
+                final_end = candidate["end_index"]
+                if final_end <= final_start:
+                    continue
+                detected_distance = rec_cum_dists[final_end] - rec_cum_dists[final_start]
+                if detected_distance <= 0:
+                    continue
+                ref_distance = float(candidate.get("ref_distance", 0.0) or 0.0)
+                if args.min_length_ratio > 0 and ref_distance > 0:
+                    length_ratio = detected_distance / ref_distance
+                    if length_ratio < args.min_length_ratio:
+                        logging.warning(
+                            "Rejected marker match for '%s': length ratio %.3f below min %.3f.",
+                            candidate["segment_name"], length_ratio, args.min_length_ratio,
+                        )
+                        continue
+                start_crossing = candidate.get("start_crossing")
+                end_crossing = candidate.get("end_crossing")
+                start_diff = float(candidate.get("start_diff", 0.0))
+                end_diff = float(candidate.get("end_diff", 0.0))
+                ref_start_coords = candidate["ref_start_coords"]
+                ref_end_coords = candidate["ref_end_coords"]
+                if args.final_xtrack_p95_m > 0 or args.final_xtrack_max_m > 0:
+                    if len(ref_points) >= 2:
+                        lat_scale_ref = sum(p["lat"] for p in ref_points) / len(ref_points)
+                        p95, xmax = compute_xtrack_stats(
+                            recorded_points, ref_points, lat_scale_ref, final_start, final_end, sample_max=args.final_xtrack_samples
+                        )
+                        if p95 is not None and xmax is not None:
+                            logging.info("Final xtrack for '%s': p95=%.2f m, max=%.2f m.",
+                                         candidate["segment_name"], p95, xmax)
+                            if args.final_xtrack_p95_m > 0 and p95 > args.final_xtrack_p95_m:
+                                continue
+                            if args.final_xtrack_max_m > 0 and xmax > args.final_xtrack_max_m:
+                                continue
+                    else:
+                        logging.info("Skipping final xtrack gate for '%s': reference has no shape points.",
+                                     candidate["segment_name"])
+                time_seconds = None
+                if start_crossing and end_crossing and start_crossing.get("time") and end_crossing.get("time"):
+                    time_seconds = (end_crossing["time"] - start_crossing["time"]).total_seconds()
+                if time_seconds is None:
+                    time_seconds = measure_segment_time(recorded_points, final_start, final_end)
+                time_str = str(datetime.timedelta(seconds=int(time_seconds))) if time_seconds is not None else "N/A"
+                for (prev_s, prev_e) in accepted_windows:
+                    overlap = max(0, min(final_end, prev_e) - max(final_start, prev_s))
+                    if overlap <= 0:
+                        continue
+                    denom = min(prev_e - prev_s, final_end - final_start)
+                    if denom > 0 and overlap / denom > 0.9:
+                        logging.info("Skipping near-duplicate marker match for '%s' at [%d,%d].",
+                                     candidate["segment_name"], final_start, final_end)
+                        break
+                else:
+                    accepted_windows.append((final_start, final_end))
+                    all_accepted_windows.append((final_start, final_end))
+                    match_num = len(results) + 1
+                    result = {
+                        "match_num": match_num,
+                        "segment": candidate["segment_name"],
+                        "start_index": final_start,
+                        "end_index": final_end,
+                        "start_cross_idx0": start_crossing.get("idx0") if start_crossing else None,
+                        "start_cross_idx1": start_crossing.get("idx1") if start_crossing else None,
+                        "end_cross_idx0": end_crossing.get("idx0") if end_crossing else None,
+                        "end_cross_idx1": end_crossing.get("idx1") if end_crossing else None,
+                        "start_cross_interp": bool(start_crossing.get("interp")) if start_crossing else False,
+                        "end_cross_interp": bool(end_crossing.get("interp")) if end_crossing else False,
+                        "ref_distance": ref_distance,
+                        "detected_distance": detected_distance,
+                        "dtw_avg": float(candidate.get("dtw_avg", 0.0)),
+                        "time_seconds": time_seconds,
+                        "time_str": time_str,
+                        "ref_start": f"({ref_start_coords[0]:.6f}, {ref_start_coords[1]:.6f})",
+                        "ref_end": f"({ref_end_coords[0]:.6f}, {ref_end_coords[1]:.6f})",
+                        "start_diff": start_diff,
+                        "end_diff": end_diff,
+                        "start_crossing": start_crossing,
+                        "end_crossing": end_crossing
+                    }
+                    results.append(result)
+                    logging.info(
+                        "Segment %s (%s): indices (%d, %d), ref_dist=%.2f m, detected_dist=%.2f m, time=%s, start_diff=%.2f m, end_diff=%.2f m",
+                        candidate["segment_name"], mode, final_start, final_end, ref_distance, detected_distance,
+                        time_str, start_diff, end_diff,
+                    )
+                    if args.export_gpx:
+                        safe_seg = candidate["segment_name"].replace(os.sep, "_").replace(":", "-")
+                        export_filename = f"{os.path.splitext(args.export_gpx_file)[0]}_{safe_seg}_match{match_num}.gpx"
+                        export_match_bundle(
+                            result,
+                            recorded_points,
+                            ref_points,
+                            args.recorded,
+                            candidate["segment_name"],
+                            export_filename,
+                            args.bbox_margin,
+                            match_num,
+                            args.line_length_m,
+                            start_line_points=candidate.get("start_line"),
+                            finish_line_points=candidate.get("finish_line"),
+                        )
             continue
         shape_mode = "step_vectors" if args.shape_mode == "auto" else args.shape_mode
         lat_scale_ref = sum(p["lat"] for p in ref_points) / len(ref_points)

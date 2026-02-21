@@ -40,6 +40,13 @@
     - Start line anchored at the first point, perpendicular to the vector between the first two reference points.
     - Finish line anchored at the last point, perpendicular to the vector between the last two reference points.
     - Start/finish lines are finite segments; default total line length is 8m (tunable via CLI) to reflect typical GPS accuracy.
+    - Automatic marker-based modes when a reference GPX defines start/finish markers:
+      - Point mode: named points `start` and `finish` define virtual circles (default radius 10m; per-role radii tunable), start is leaving start circle, finish is entering finish circle.
+      - Line mode: named lines `start` and `finish` (2 points each) define explicit crossing boundaries.
+      - Hybrid mode: both point and line markers present; both constraints are applied.
+      - Trap points: named points `trap*` create additional consecutive subsegments (`start->trap1`, `trap1->trap2`, ..., `trapN->finish`) in addition to the full `start->finish`.
+      - If any start/finish marker hints exist in a reference file, shape-based matching for that file is disabled.
+      - Other named points/lines in markerized references are ignored and emitted as warnings.
     - Shape of the reference segment (including repeated/self-intersecting cases), evaluated in a translation-invariant representation but bounded by spatial proximity limits.
     - Length of the reference segment.
     - Start/finish crossing detection with interpolation between the two recorded points that bracket the line; output must identify interpolated points and bracketing indices.
@@ -67,6 +74,10 @@
 - Coarse gating uses multiple spatial filters: start/end candidate bboxes, overall bbox (derived from `--bbox-margin * 3.33`), rhomboid overlap, envelope distance, and optional x-track p95 filters.
 - Matching is translation-tolerant but bounded: shape matching is translation-invariant while enforcing spatial proximity limits (GPS error bounds).
 - Start/finish crossings are detected within the shape-matched window to avoid false matches when lingering around start/finish.
+- Reference mode is auto-selected per GPX file:
+  - `shape` when no start/finish markers are present.
+  - `point` / `line` / `hybrid` when marker definitions are present.
+- Marker-mode references bypass DTW shape discovery and use marker crossing logic directly (with optional trap-derived subsegments).
 - Optional single-passage validation to reject re-entries on reference segments without repetitions/self-intersections (off by default; only on user request and only when references satisfy requirements).
 - Output stage formats results to stdout/CSV/XLSX and optionally exports matched/candidate GPX files.
   - Statistics include:
