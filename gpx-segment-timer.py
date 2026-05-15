@@ -1608,6 +1608,9 @@ def find_all_segment_matches(recorded_points: List[Dict[str, Any]],
                 accepted_in_run += 1
             s += 1
 
+        if accepted_in_run > 0:
+            runs_and_candidates.append((len(runs_and_candidates), (rs, re), run_cands))
+
         if logging.getLogger().isEnabledFor(logging.INFO):
             if e_ranges:
                 # merge overlapping e_ranges for clearer logging
@@ -1626,8 +1629,6 @@ def find_all_segment_matches(recorded_points: List[Dict[str, Any]],
                 logging.info("Run [%d,%d]: strict envelope rejects: %d", rs, re, strict_rejects_run)
             if accepted_in_run == 0:
                 logging.info("Run [%d,%d] produced no valid end candidates; discarding this start-bbox excursion.", rs, re)
-            else:
-                runs_and_candidates.append((len(runs_and_candidates), (rs, re), run_cands))
 
     if dump_pattern and runs_and_candidates and ref_name:
         try:
