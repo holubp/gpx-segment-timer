@@ -1855,7 +1855,8 @@ def export_unmatched_segments(recorded_points: List[Dict[str, Any]],
 
 def output_results(results: List[Dict[str, Any]],
                    output_mode: str,
-                   output_file: Optional[str]) -> None:
+                   output_file: Optional[str],
+                   detailed_stdout: bool = False) -> None:
     """
     Output results in stdout, csv, or xlsx.
     
@@ -1872,7 +1873,21 @@ def output_results(results: List[Dict[str, Any]],
               "Ref Dist (m)", "Detected Dist (m)",
               "DTW Avg (m)", "Time (s)", "Time (H:M:S)",
               "Ref Start", "Ref End", "Start Diff (m)", "End Diff (m)"]
-    if output_mode == "stdout":
+    if output_mode == "stdout" and not detailed_stdout:
+        compact_header = ["Match", "Segment", "Ref Dist (m)", "Detected Dist (m)", "Time (s)", "Time (H:M:S)"]
+        print("{:<8} {:<35} {:>15} {:>20} {:>12} {:>15}".format(*compact_header))
+        print("-" * 112)
+        for res in results:
+            time_seconds = res["time_seconds"] if res["time_seconds"] is not None else -1
+            print("{:<8} {:<35} {:>15.2f} {:>20.2f} {:>12.2f} {:>15}".format(
+                f"match{res['match_num']}",
+                res["segment"],
+                res["ref_distance"],
+                res["detected_distance"],
+                time_seconds,
+                res["time_str"] if res["time_str"] is not None else "N/A",
+            ))
+    elif output_mode == "stdout":
         print("{:<8} {:<25} {:>10} {:>10} {:>12} {:>12} {:>12} {:>12} {:>12} {:>10} {:>15} {:>20} {:>15} {:>12} {:>15} {:>25} {:>25} {:>18} {:>15}".format(*header))
         print("-" * 240)
         for res in results:
@@ -2914,7 +2929,7 @@ def main() -> None:
             results.sort(key=lambda r: (r["segment"], r["start_index"], -(r["end_index"] - r["start_index"])))
         else:
             results.sort(key=lambda r: (r["start_index"], -(r["end_index"] - r["start_index"])))
-        output_results(results, args.output_mode, args.output_file)
+        output_results(results, args.output_mode, args.output_file, detailed_stdout=(args.verbose or args.debug))
     else:
         logging.info("No matching segments detected in the recorded track.")
 

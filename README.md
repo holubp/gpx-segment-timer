@@ -124,7 +124,7 @@ This supports marker-only references like `segments/semmering.gpx` with waypoint
 |--------|-------------|
 | `-r, --recorded` | Path to recorded GPX file (required). |
 | `-f, --reference-folder` | Folder with reference segment GPX files (required). |
-| `-o, --output-mode` | Output format: `stdout` (default), `csv`, or `xlsx`. |
+| `-o, --output-mode` | Output format: `stdout` (default), `csv`, or `xlsx`; stdout prints a compact table unless `-v`/`-d` is enabled. |
 | `-O, --output-file` | Output file path for CSV/XLSX (default: unset). |
 | `--export-gpx` | Export matched segments as GPX (default: off). |
 | `--export-gpx-file` | Base name for exported GPX files (default: `matched_segments.gpx`). |
@@ -248,8 +248,8 @@ Markerized references are auto-detected and can use:
 
 | Option | Description |
 |--------|-------------|
-| `-v, --verbose` | INFO logs (default: off). |
-| `-d, --debug` | DEBUG logs (default: off). |
+| `-v, --verbose` | INFO logs and detailed stdout table (default: off). |
+| `-d, --debug` | DEBUG logs and detailed stdout table (default: off). |
 
 ---
 

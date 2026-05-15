@@ -80,6 +80,7 @@
 - Marker-mode references bypass DTW shape discovery and use marker crossing logic directly (with optional trap-derived subsegments).
 - Optional single-passage validation to reject re-entries on reference segments without repetitions/self-intersections (off by default; only on user request and only when references satisfy requirements).
 - Output stage formats results to stdout/CSV/XLSX and optionally exports matched/candidate GPX files.
+  - Default stdout output must remain useful without `-v`/`--verbose`; verbose/debug modes may add diagnostic columns and logs, but should not be required to see matched segments.
   - Statistics include:
     - Timing precision to 0.001s.
     - Length precision to 0.1m.
