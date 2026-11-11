@@ -95,7 +95,9 @@
   - Candidate endpoint margin is set by `--candidate-endpoint-margin-m` (negative uses `--gps-error-m`).
   - Default strict envelope + DTW window settings come from `--matching-preset standard` (tight/loose available).
   - Endpoint refinement windows are in meters (`--endpoint-window-start`, `--endpoint-window-end`) and are converted to points using cumulative distance.
-  - Crossing search expansion defaults to ratio-based growth (`--crossing-expand-mode ratio`) with a hard cap (`--crossing-window-max`).
+  - Crossing search expansion defaults to ratio-based growth (`--crossing-expand-mode ratio`) with an along-track distance cap (`--crossing-window-max`, meters; tight/standard/none 20.0, loose 100.0, loosest 200.0). Never interpret this flag as raw recorded points or convert it by Hz alone. Keep the public automotodrom finish-crossing regression when tuning these defaults; 20 m is too small for its loose-profile refinement.
+  - Apply the crossing distance cap to initial, expanded, and fallback shape-mode searches. Include bracketing samples outside the limit only when the interpolated crossing remains within it; use cumulative recorded distance and explicit start/finish boundary indices, including when their coordinates coincide.
+  - Keep the debug tool's crossing cap consistent with the matcher. Log meter limits with an explicit `_m` key; do not reinterpret old point-based log values as meters.
 
 ## Testing Guidelines
 - The test framework is driven by `tests/manifest.json` and executed via `tests/run_tests.py`.
@@ -114,6 +116,7 @@
   - Expected matches are recorded in `expected.json`; comparisons allow index tolerances.
 - Use `--update-expected` to refresh baselines after intentional algorithm changes.
 - Keep the synthetic dataset count reasonable so the full test run remains practical after updates.
+- Run `python3 -m unittest discover -s tests -p 'test_*.py'` for focused regression tests, including crossing-window checks at 1/10/20 Hz, uneven sampling, and interpolation across gaps. Geometry tests execute the production functions without requiring optional GPX/DTW imports.
 - When adjusting matching logic, update expected results and verify DTW thresholds (or other thresholds if other methods are introduced) and endpoint deviations remain reasonable.
 
 

@@ -63,7 +63,7 @@ pip install gpxpy fastdtw openpyxl
 
 ## Matching Presets (recommended first)
 
-Presets set defaults for strict envelope + DTW sliding window parameters. Any explicit flag overrides the preset value. Default preset is `standard`.
+Presets set defaults for strict envelope, DTW sliding windows, and crossing-search limits. Any explicit flag overrides the preset value. Default preset is `standard`.
 
 Preset summary:
 
@@ -75,13 +75,14 @@ Preset summary:
 | `dtw-window-m` | 30.0 | 30.0 | 30.0 | 30.0 |
 | `dtw-window-max-avg` | 1.5 | 5.0 | 15.0 | 25.0 |
 | `gps-error-m` | 12.0 | 12.0 | 12.0 | 24.0 |
+| `crossing-window-max` (meters) | 20.0 | 20.0 | 100.0 | 200.0 |
 
 Preset intent:
 - **`tight`**: packed tracks with similar shapes (e.g., Jinacovice).
 - **`standard`**: general-purpose default.
 - **`loose`**: noisy/forested tracks; allows more drift.
 - **`loosest`**: extreme GPS drift; consider enabling x-track gates (`--prefilter-xtrack-p95-m`, `--prefilter-xtrack-max-m`, `--final-xtrack-p95-m`, `--final-xtrack-max-m`).
-- **`none`**: skip preset defaults; use explicit flags or legacy defaults.
+- **`none`**: skip preset defaults; use explicit flags or legacy defaults. The crossing-search cap remains 20 m unless overridden.
 
 Examples:
 
@@ -231,10 +232,30 @@ Markerized references are auto-detected and can use:
 | `--crossing-shape-window-frac` | Local shape window fraction of resample count (default `0.2`). |
 | `--crossing-shape-window-min` | Minimum window size for local crossing shape matching (default `3`). |
 | `--crossing-length-weight` | Length weight for crossing selection (negative = auto, default `-1.0`). |
-| `--crossing-window-max` | Max crossing search expansion window (default `200`). |
+| `--crossing-window-max` | Maximum along-track search distance on either side of each start/finish boundary, in meters (on by default: `20.0` for tight/standard/none, `100.0` for loose, `200.0` for loosest). Accepts decimals; `0` allows only a crossing exactly at the boundary. |
 | `--crossing-edge-window-s` | Start/end crossing search window in seconds (default `1.0`, uses median sampling rate). |
 | `--crossing-expand-mode` | Crossing search expansion mode when no crossings are found (`fixed` or `ratio`, default `ratio`). |
 | `--crossing-expand-k` | Scale factor for ratio-based crossing expansion (default `1.0`). |
+
+`--crossing-window-max` now uses **meters, not recorded points**. Existing commands
+must be reviewed: `--crossing-window-max 20` now means 20 m each side, not 20
+samples. There is no exact conversion from the previous 200-point default using
+sampling frequency alone: riding speed and uneven sampling also affect distance.
+The new profile limits are independent of recording frequency. Loose uses 100 m
+to retain validated finish crossings on the public automotodrom example; 20 m
+was too restrictive there. These are calibrated distance limits, not exact
+conversions of the old point count.
+
+The cap measures distance travelled along the recording, not straight-line distance
+from the start/finish coordinates. It bounds initial searches, expanded searches,
+and fallback crossing-pair searches. A sample just beyond the limit may bracket an
+interpolated crossing, but the crossing itself must be inside the limit. Increasing
+`--endpoint-window-start/end` does not override this cap. The cap applies to shape
+matching; explicit marker modes search their named boundaries directly.
+
+The debug tool uses the same meter cap and reports `crossing_window_max_m`.
+When importing older logs, it ignores their point-based crossing cap and warns;
+set the new meter limit explicitly when reproducing an older analysis.
 
 ### Optional Single-Passage Check
 
@@ -370,6 +391,7 @@ python3 tests/tools/generate_synthetic_data.py \
 - **`--line-length-m`** controls how wide the finite line segment is.
 - Default 8m matches typical GPS +-4m accuracy.
 - Use smaller values for kink-heavy segments that intersect the line multiple times.
+- `--crossing-window-max` limits how far along the recording boundary searches may travel (standard default 20 m each side; loose 100 m; loosest 200 m). It is independent of the line's physical width and the spatial envelope.
 
 ### Strict Envelope + DTW Window Presets
 See the **Matching Presets** section for defaults and guidance.

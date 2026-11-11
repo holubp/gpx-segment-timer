@@ -577,6 +577,7 @@ def log_config(args: argparse.Namespace, label: str) -> None:
 def apply_matching_preset(args: argparse.Namespace) -> None:
     presets = {
         "standard": {
+            "crossing_window_max": 20.0,
             "strict_envelope_window_m": 30.0,
             "strict_envelope_off_pct": 0.2,
             "envelope_max_m": 5.0,
@@ -584,6 +585,7 @@ def apply_matching_preset(args: argparse.Namespace) -> None:
             "dtw_window_max_avg": 5.0,
         },
         "tight": {
+            "crossing_window_max": 20.0,
             "strict_envelope_window_m": 30.0,
             "strict_envelope_off_pct": 0.2,
             "envelope_max_m": 2.0,
@@ -591,6 +593,7 @@ def apply_matching_preset(args: argparse.Namespace) -> None:
             "dtw_window_max_avg": 1.5,
         },
         "loose": {
+            "crossing_window_max": 100.0,
             "strict_envelope_window_m": 30.0,
             "strict_envelope_off_pct": 0.2,
             "envelope_max_m": 10.0,
@@ -598,6 +601,7 @@ def apply_matching_preset(args: argparse.Namespace) -> None:
             "dtw_window_max_avg": 15.0,
         },
         "loosest": {
+            "crossing_window_max": 200.0,
             "strict_envelope_window_m": 30.0,
             "strict_envelope_off_pct": 0.2,
             "envelope_max_m": 50.0,
@@ -606,6 +610,8 @@ def apply_matching_preset(args: argparse.Namespace) -> None:
             "gps_error_m": 24.0,
         },
     }
+    if args.crossing_window_max is None:
+        args.crossing_window_max = presets.get(args.matching_preset, {}).get('crossing_window_max', 20.0)
     if args.matching_preset == "none":
         return
     preset = presets.get(args.matching_preset)
@@ -695,6 +701,64 @@ def find_line_crossings(recorded_points: List[Dict[str, Any]],
                 "interp": True,
             })
     return crossings
+
+
+def find_line_crossings_in_distance_window(
+        points: List[Dict[str, Any]], cumulative: List[float],
+        anchor: Tuple[float, float], normal: Tuple[float, float],
+        center_idx: int, max_distance_m: float, lat_scale: float,
+        line_half_len: Optional[float] = None,
+        start_idx: int = 0, end_idx: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Find crossings within an along-track distance of a boundary sample.
+
+    Cumulative distances must correspond to points in recording order.
+    Optional index bounds are inclusive/exclusive. One sample beyond each
+    distance bound is inspected for interpolation; the crossing itself must
+    remain within max_distance_m of center_idx along the recorded trajectory.
+
+    Args:
+        points: Recorded latitude/longitude/time dictionaries.
+        cumulative: Nondecreasing along-track distances in meters, one per point.
+        anchor: Latitude/longitude of the crossing line anchor.
+        normal: Unit normal to the line in local projected coordinates.
+        center_idx: Recorded sample around which the distance cap is enforced.
+        max_distance_m: Finite, nonnegative search radius along the recording.
+        lat_scale: Reference latitude used for local projection.
+        line_half_len: Half the finite line length in meters, or None for infinite.
+        start_idx: Optional inclusive lower sample index.
+        end_idx: Optional exclusive upper sample index; None uses the track end.
+
+    Returns:
+        Crossing dictionaries in recording order, with bracketing sample indices.
+
+    Raises:
+        ValueError: The cap, center index, or cumulative array length is invalid.
+    """
+    if not math.isfinite(max_distance_m) or max_distance_m < 0:
+        raise ValueError('Crossing window maximum must be finite and nonnegative (meters).')
+    if len(points) != len(cumulative):
+        raise ValueError('Crossing search points and cumulative distances must have equal lengths.')
+    if not points:
+        return []
+    if not 0 <= center_idx < len(points):
+        raise ValueError('Crossing search center index is outside the recorded track.')
+    center_distance = cumulative[center_idx]
+    left = max(start_idx, 0, bisect.bisect_left(cumulative, center_distance - max_distance_m) - 1)
+    right = min(len(points), len(points) if end_idx is None else end_idx,
+                bisect.bisect_right(cumulative, center_distance + max_distance_m) + 1)
+    crossings = find_line_crossings(points, anchor, normal, left, right, lat_scale, line_half_len)
+    accepted = []
+    for crossing in crossings:
+        first, last = crossing['idx0'], crossing['idx1']
+        point = points[first]
+        segment_distance = haversine_distance(
+            (point['lat'], point['lon']), (points[last]['lat'], points[last]['lon']))
+        fraction = 0.0 if segment_distance == 0 else min(1.0, haversine_distance(
+            (point['lat'], point['lon']), (crossing['lat'], crossing['lon'])) / segment_distance)
+        position = cumulative[first] + fraction * (cumulative[last] - cumulative[first])
+        if abs(position - center_distance) <= max_distance_m + 1e-6:
+            accepted.append(crossing)
+    return accepted
 
 
 def _circle_crossing(recorded_points: List[Dict[str, Any]],
@@ -2105,8 +2169,8 @@ def main() -> None:
                         help="Trap marker circle radius (meters); negative uses --marker-circle-m.")
     parser.add_argument("--crossing-length-weight", type=float, default=-1.0,
                         help="Weight for length error when selecting crossing pairs; negative enables auto-tuning.")
-    parser.add_argument("--crossing-window-max", type=int, default=200,
-                        help="Max number of points to extend around candidate window when selecting crossings.")
+    parser.add_argument("--crossing-window-max", type=float, default=None,
+                        help="Maximum along-track crossing search distance (meters) on either side of each boundary; preset default: tight/standard/none 20, loose 100, loosest 200.")
     parser.add_argument("--crossing-edge-window-s", type=float, default=1.0,
                         help="Edge window in seconds for start/end line crossing search (converted using median sampling rate).")
     parser.add_argument("--crossing-expand-mode", default="ratio",
@@ -2145,6 +2209,9 @@ def main() -> None:
                         help="Group output by segment name; otherwise results are sorted by start index.")
     args = parser.parse_args()
     apply_matching_preset(args)
+    if not math.isfinite(args.crossing_window_max) or args.crossing_window_max < 0:
+        parser.error('--crossing-window-max must be finite and nonnegative (meters).')
+    args.crossing_window_max_m = args.crossing_window_max
     log_level = logging.WARNING
     if args.verbose:
         log_level = logging.INFO
@@ -2412,6 +2479,7 @@ def main() -> None:
                 line_length_m=args.line_length_m,
                 bbox_margin=args.bbox_margin,
                 candidate_margin=args.candidate_margin,
+                crossing_window_max_m=args.crossing_window_max,
             )
             log_config(seg_cfg, "Segment")
         for (start_idx, end_idx, dtw_avg, orig_start, orig_end) in matches:
@@ -2459,6 +2527,15 @@ def main() -> None:
                 logging.info("Rejected DTW winner for '%s' at [%d,%d): non-positive length.", seg_filename, final_start, final_end)
                 continue
             def compute_crossings_and_diffs(start_idx: int, end_idx: int) -> Tuple[Tuple[float, float], Tuple[float, float], float, float, Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+                def capped_crossings(points, anchor, normal, left, right, scale, half_len, center):
+                    return find_line_crossings_in_distance_window(
+                        points, rec_cum_dists, anchor, normal, center,
+                        args.crossing_window_max, scale, half_len, left, right + 1)
+
+                def capped_crossing(points, anchor, normal, left, right, scale, pick_last, half_len, center):
+                    crossings = capped_crossings(points, anchor, normal, left, right, scale, half_len, center)
+                    return (crossings[-1] if pick_last else crossings[0]) if crossings else None
+
                 start_cross = None
                 end_cross = None
                 start_crossings: List[Dict[str, Any]] = []
@@ -2521,7 +2598,6 @@ def main() -> None:
                         edge_window = crossing_edge_window_pts
                     else:
                         edge_window = max(30, int(0.1 * resample_count))
-                    edge_window = min(args.crossing_window_max, edge_window)
                     endpoint_start_pts = _endpoint_window_pts_from_m(rec_cum_dists, start_idx, args.endpoint_window_start)
                     endpoint_end_pts = _endpoint_window_pts_from_m(rec_cum_dists, end_idx - 1, args.endpoint_window_end)
                     expanded_start_window = max(edge_window, endpoint_start_pts)
@@ -2542,45 +2618,43 @@ def main() -> None:
                         dynamic_end = int(round(args.crossing_expand_k * expected_pts_end * ratio_factor))
                         expanded_start_window = max(expanded_start_window, dynamic_start)
                         expanded_end_window = max(expanded_end_window, dynamic_end)
-                    expanded_start_window = min(args.crossing_window_max, expanded_start_window)
-                    expanded_end_window = min(args.crossing_window_max, expanded_end_window)
 
                     s_lo = max(0, start_idx - edge_window)
                     s_hi = min(len(recorded_points) - 1, start_idx + edge_window)
                     e_lo = max(0, end_idx - edge_window)
                     e_hi = min(len(recorded_points) - 1, end_idx + edge_window)
-                    start_cross = find_line_crossing(
-                        recorded_points, ref_start_coords, start_normal, s_lo, s_hi, start_lat_scale, False, line_half_len)
-                    end_cross = find_line_crossing(
-                        recorded_points, ref_end_coords, end_normal, e_lo, e_hi, end_lat_scale, True, line_half_len)
-                    start_crossings = find_line_crossings(
-                        recorded_points, ref_start_coords, start_normal, s_lo, s_hi, start_lat_scale, line_half_len)
-                    end_crossings = find_line_crossings(
-                        recorded_points, ref_end_coords, end_normal, e_lo, e_hi, end_lat_scale, line_half_len)
+                    start_cross = capped_crossing(
+                        recorded_points, ref_start_coords, start_normal, s_lo, s_hi, start_lat_scale, False, line_half_len, start_idx)
+                    end_cross = capped_crossing(
+                        recorded_points, ref_end_coords, end_normal, e_lo, e_hi, end_lat_scale, True, line_half_len, end_idx - 1)
+                    start_crossings = capped_crossings(
+                        recorded_points, ref_start_coords, start_normal, s_lo, s_hi, start_lat_scale, line_half_len, start_idx)
+                    end_crossings = capped_crossings(
+                        recorded_points, ref_end_coords, end_normal, e_lo, e_hi, end_lat_scale, line_half_len, end_idx - 1)
 
                     if not start_crossings and expanded_start_window > edge_window:
                         s_lo2 = max(0, start_idx - expanded_start_window)
                         s_hi2 = min(len(recorded_points) - 1, start_idx + expanded_start_window)
-                        start_cross = find_line_crossing(
-                            recorded_points, ref_start_coords, start_normal, s_lo2, s_hi2, start_lat_scale, False, line_half_len)
-                        start_crossings = find_line_crossings(
-                            recorded_points, ref_start_coords, start_normal, s_lo2, s_hi2, start_lat_scale, line_half_len)
+                        start_cross = capped_crossing(
+                            recorded_points, ref_start_coords, start_normal, s_lo2, s_hi2, start_lat_scale, False, line_half_len, start_idx)
+                        start_crossings = capped_crossings(
+                            recorded_points, ref_start_coords, start_normal, s_lo2, s_hi2, start_lat_scale, line_half_len, start_idx)
                         if args.verbose:
                             logging.info(
-                                "Expanded start crossing window for '%s' from %d to %d points (mode=%s).",
-                                seg_filename, edge_window, expanded_start_window, args.crossing_expand_mode)
+                                "Requested expanded start crossing window for '%s' from %d to %d points (mode=%s, hard cap=%.1f m).",
+                                seg_filename, edge_window, expanded_start_window, args.crossing_expand_mode, args.crossing_window_max)
 
                     if not end_crossings and expanded_end_window > edge_window:
                         e_lo2 = max(0, end_idx - expanded_end_window)
                         e_hi2 = min(len(recorded_points) - 1, end_idx + expanded_end_window)
-                        end_cross = find_line_crossing(
-                            recorded_points, ref_end_coords, end_normal, e_lo2, e_hi2, end_lat_scale, True, line_half_len)
-                        end_crossings = find_line_crossings(
-                            recorded_points, ref_end_coords, end_normal, e_lo2, e_hi2, end_lat_scale, line_half_len)
+                        end_cross = capped_crossing(
+                            recorded_points, ref_end_coords, end_normal, e_lo2, e_hi2, end_lat_scale, True, line_half_len, end_idx - 1)
+                        end_crossings = capped_crossings(
+                            recorded_points, ref_end_coords, end_normal, e_lo2, e_hi2, end_lat_scale, line_half_len, end_idx - 1)
                         if args.verbose:
                             logging.info(
-                                "Expanded end crossing window for '%s' from %d to %d points (mode=%s).",
-                                seg_filename, edge_window, expanded_end_window, args.crossing_expand_mode)
+                                "Requested expanded end crossing window for '%s' from %d to %d points (mode=%s, hard cap=%.1f m).",
+                                seg_filename, edge_window, expanded_end_window, args.crossing_expand_mode, args.crossing_window_max)
 
                     def end_crossings_for_start(s_idx: int) -> List[Dict[str, Any]]:
                         extra = max(args.gps_error_m * 4.0, ref_distance * 0.02)
@@ -2589,7 +2663,7 @@ def main() -> None:
                         import bisect as _bis
                         e_lo = _bis.bisect_left(rec_cum_dists, lower, lo=s_idx + 1, hi=len(rec_cum_dists) - 1)
                         e_hi = _bis.bisect_right(rec_cum_dists, upper, lo=s_idx + 1, hi=len(rec_cum_dists) - 1)
-                        return find_line_crossings(recorded_points, ref_end_coords, end_normal, e_lo, e_hi, end_lat_scale, line_half_len)
+                        return capped_crossings(recorded_points, ref_end_coords, end_normal, e_lo, e_hi, end_lat_scale, line_half_len, end_idx - 1)
 
                     def start_crossings_for_end(e_idx: int) -> List[Dict[str, Any]]:
                         extra = max(args.gps_error_m * 4.0, ref_distance * 0.02)
@@ -2598,7 +2672,7 @@ def main() -> None:
                         import bisect as _bis
                         s_lo2 = _bis.bisect_left(rec_cum_dists, lower, lo=0, hi=e_idx)
                         s_hi2 = _bis.bisect_right(rec_cum_dists, upper, lo=0, hi=e_idx)
-                        return find_line_crossings(recorded_points, ref_start_coords, start_normal, s_lo2, s_hi2, start_lat_scale, line_half_len)
+                        return capped_crossings(recorded_points, ref_start_coords, start_normal, s_lo2, s_hi2, start_lat_scale, line_half_len, start_idx)
 
                     if start_crossings and (end_cross is None or (end_cross and haversine_distance((end_cross["lat"], end_cross["lon"]), ref_end_coords) > args.bbox_margin)):
                         extended_end: List[Dict[str, Any]] = []
