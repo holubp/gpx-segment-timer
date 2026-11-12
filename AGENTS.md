@@ -93,10 +93,10 @@
     - Start/finish crossing points, marking interpolated points and the bracketing points.
 - Configuration is driven by CLI flags; defaults favor general-purpose matching on common GPX tracks.
   - Candidate endpoint margin is set by `--candidate-endpoint-margin-m` (negative uses `--gps-error-m`).
-  - Default strict envelope + DTW window settings come from `--matching-preset standard` (tight/loose available).
-  - Profiles live in `apply_matching_preset()` in `gpx-segment-timer.py`. Derive `normal-widetrack` from `standard`, changing only `envelope_max_m` to 10.0; preserve explicit CLI overrides and test equivalence of all other defaults.
+  - Default strict envelope + DTW window settings come from `--matching-preset normal` (tight/loose available). Keep `standard` as an equivalent legacy alias, including explicit CLI overrides; use `normal` in new examples and retain compatibility tests for `standard`.
+  - Profiles live in `apply_matching_preset()` in `gpx-segment-timer.py`. Derive `normal-widetrack` from `normal`, changing only `envelope_max_m` to 10.0; preserve explicit CLI overrides and test equivalence of all other defaults.
   - Endpoint refinement windows are in meters (`--endpoint-window-start`, `--endpoint-window-end`) and are converted to points using cumulative distance.
-  - Crossing search expansion defaults to ratio-based growth (`--crossing-expand-mode ratio`) with an along-track distance cap (`--crossing-window-max`, meters; tight/standard/normal-widetrack/none 20.0, loose 100.0, loosest 200.0). Never interpret this flag as raw recorded points or convert it by Hz alone. Keep the public automotodrom finish-crossing regression when tuning these defaults; 20 m is too small for its loose-profile refinement.
+  - Crossing search expansion defaults to ratio-based growth (`--crossing-expand-mode ratio`) with an along-track distance cap (`--crossing-window-max`, meters; tight/normal/normal-widetrack/none 20.0, loose 100.0, loosest 200.0). Never interpret this flag as raw recorded points or convert it by Hz alone. Keep the public automotodrom finish-crossing regression when tuning these defaults; 20 m is too small for its loose-profile refinement.
   - Apply the crossing distance cap to initial, expanded, and fallback shape-mode searches. Include bracketing samples outside the limit only when the interpolated crossing remains within it; use cumulative recorded distance and explicit start/finish boundary indices, including when their coordinates coincide.
   - Keep the debug tool's crossing cap consistent with the matcher. Log meter limits with an explicit `_m` key; do not reinterpret old point-based log values as meters.
 

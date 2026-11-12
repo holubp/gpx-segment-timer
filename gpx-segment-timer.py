@@ -577,7 +577,7 @@ def log_config(args: argparse.Namespace, label: str) -> None:
 def apply_matching_preset(args: argparse.Namespace) -> None:
     """Apply preset defaults while preserving explicit command-line values."""
     presets = {
-        "standard": {
+        "normal": {
             "crossing_window_max": 20.0,
             "strict_envelope_window_m": 30.0,
             "strict_envelope_off_pct": 0.2,
@@ -611,7 +611,8 @@ def apply_matching_preset(args: argparse.Namespace) -> None:
             "gps_error_m": 24.0,
         },
     }
-    presets["normal-widetrack"] = {**presets["standard"], "envelope_max_m": 10.0}
+    presets["standard"] = presets["normal"]
+    presets["normal-widetrack"] = {**presets["normal"], "envelope_max_m": 10.0}
     if args.crossing_window_max is None:
         args.crossing_window_max = presets.get(args.matching_preset, {}).get('crossing_window_max', 20.0)
     if args.matching_preset == "none":
@@ -2076,8 +2077,8 @@ def main() -> None:
                         help="Output file path (required for CSV and XLSX outputs).")
     parser.add_argument("--candidate-margin", type=float, default=0.2,
                         help="Allowed variation (fraction) in candidate segment distance relative to reference.")
-    parser.add_argument("--matching-preset", choices=["standard", "normal-widetrack", "tight", "loose", "loosest", "none"], default="standard",
-                        help="Matching preset; normal-widetrack uses standard settings with a 10 m envelope (default: standard).")
+    parser.add_argument("--matching-preset", choices=["normal", "normal-widetrack", "tight", "loose", "loosest", "none", "standard"], default="normal",
+                        help="Matching preset (default: normal); standard is a legacy alias for normal; normal-widetrack widens its envelope to 10 m.")
     parser.add_argument("--candidate-endpoint-margin-m", type=float, default=-1.0,
                         help="Start/end bbox margin in meters for candidate selection; negative uses --gps-error-m.")
     parser.add_argument("--envelope-max-m", type=float, default=None,
@@ -2172,7 +2173,7 @@ def main() -> None:
     parser.add_argument("--crossing-length-weight", type=float, default=-1.0,
                         help="Weight for length error when selecting crossing pairs; negative enables auto-tuning.")
     parser.add_argument("--crossing-window-max", type=float, default=None,
-                        help="Maximum along-track crossing search distance (meters) on either side of each boundary; preset default: tight/standard/normal-widetrack/none 20, loose 100, loosest 200.")
+                        help="Maximum along-track crossing search distance (meters) on either side of each boundary; preset default: tight/normal/normal-widetrack/none 20, loose 100, loosest 200.")
     parser.add_argument("--crossing-edge-window-s", type=float, default=1.0,
                         help="Edge window in seconds for start/end line crossing search (converted using median sampling rate).")
     parser.add_argument("--crossing-expand-mode", default="ratio",

@@ -63,11 +63,11 @@ pip install gpxpy fastdtw openpyxl
 
 ## Matching Presets (recommended first)
 
-Presets set defaults for strict envelope, DTW sliding windows, and crossing-search limits. Any explicit flag overrides the preset value. Default preset is `standard`.
+Presets set defaults for strict envelope, DTW sliding windows, and crossing-search limits. Any explicit flag overrides the preset value. Default preset is `normal`. The old name `standard` remains available as an equivalent legacy alias.
 
 Preset summary:
 
-| Parameter | `tight` | `standard` | `normal-widetrack` | `loose` | `loosest` |
+| Parameter | `tight` | `normal` | `normal-widetrack` | `loose` | `loosest` |
 |-----------|---------|------------|-------------------|---------|-----------|
 | `strict-envelope-window-m` | 30.0 | 30.0 | 30.0 | 30.0 | 30.0 |
 | `strict-envelope-off-pct` | 0.2 | 0.2 | 0.2 | 0.2 | 0.2 |
@@ -79,8 +79,8 @@ Preset summary:
 
 Preset intent:
 - **`tight`**: packed tracks with similar shapes (e.g., Jinacovice).
-- **`standard`**: general-purpose default.
-- **`normal-widetrack`**: standard matching with a wider corridor (10 m on each side), useful for motocross tracks. All other settings are identical to `standard`.
+- **`normal`**: general-purpose default (`standard` is a legacy alias).
+- **`normal-widetrack`**: normal matching with a wider corridor (10 m on each side), useful for motocross tracks. All other settings are identical to `normal`.
 - **`loose`**: noisy/forested tracks; allows more drift.
 - **`loosest`**: extreme GPS drift; consider enabling x-track gates (`--prefilter-xtrack-p95-m`, `--prefilter-xtrack-max-m`, `--final-xtrack-p95-m`, `--final-xtrack-max-m`).
 - **`none`**: skip preset defaults; use explicit flags or legacy defaults. The crossing-search cap remains 20 m unless overridden.
@@ -94,7 +94,7 @@ Examples:
 ```
 
 Profile settings are defined in `apply_matching_preset()` in `gpx-segment-timer.py`.
-`normal-widetrack` is equivalent to `--matching-preset standard --envelope-max-m 10`.
+`normal-widetrack` is equivalent to `--matching-preset normal --envelope-max-m 10`.
 
 ---
 
@@ -164,15 +164,15 @@ This supports marker-only references like `segments/semmering.gpx` with waypoint
 
 | Option | Description |
 |--------|-------------|
-| `--matching-preset` | Preset defaults for strict envelope, DTW window and crossing cap (`standard`, `normal-widetrack`, `tight`, `loose`, `loosest`, `none`; default `standard`). |
+| `--matching-preset` | Preset defaults for strict envelope, DTW window and crossing cap (`normal`, `normal-widetrack`, `tight`, `loose`, `loosest`, `none`; default `normal`). `standard` remains an equivalent legacy alias for `normal`. |
 | `--candidate-margin` | Relative distance tolerance for candidates (default `0.2`). |
 | `--candidate-endpoint-margin-m` | Start/end bbox margin for candidate selection (meters); negative uses `--gps-error-m` (default `-1.0`). |
 | `--bbox-margin` | Endpoint deviation tolerance in meters (default `30`); overall bbox margin is `--bbox-margin * 3.33`. |
-| `--envelope-max-m` | Max distance from reference polyline for envelope prefilter; negative uses `--gps-error-m` (default: preset; standard `5.0`, on when `> 0`). |
+| `--envelope-max-m` | Max distance from reference polyline for envelope prefilter; negative uses `--gps-error-m` (default: preset; normal `5.0`, on when `> 0`). |
 | `--envelope-allow-off` | Allowed off-envelope samples per meters: `<points> <meters>` (default `2 100`). |
 | `--envelope-sample-max` | Max number of samples per candidate for envelope prefilter; `0` uses all points (default `0`, off only when `--envelope-max-m <= 0`). |
-| `--strict-envelope-window-m` | Sliding strict envelope window length in meters; negative disables (default: preset; standard `30.0`, on when `> 0`). |
-| `--strict-envelope-off-pct` | Allowed off-envelope percentage within each strict window; `0` disables (default: preset; standard `0.2`, on when `> 0`). |
+| `--strict-envelope-window-m` | Sliding strict envelope window length in meters; negative disables (default: preset; normal `30.0`, on when `> 0`). |
+| `--strict-envelope-off-pct` | Allowed off-envelope percentage within each strict window; `0` disables (default: preset; normal `0.2`, on when `> 0`). |
 | `--prefilter-xtrack-p95-m` | Enable x-track p95 prefilter (meters); negative disables (default `-1.0`, off). |
 | `--prefilter-xtrack-max-m` | Enable x-track max prefilter (meters); negative disables (default `-1.0`, off). |
 | `--prefilter-xtrack-samples` | Sample count for x-track prefilter (default `80`; applies to p95/max). |
@@ -195,8 +195,8 @@ Markerized references are auto-detected and can use:
 | Option | Description |
 |--------|-------------|
 | `--dtw-threshold` | Max avg DTW cost (default `50`). |
-| `--dtw-window-m` | Sliding DTW window length in meters; negative disables (default: preset; standard `30.0`, on when `> 0`). |
-| `--dtw-window-max-avg` | Reject candidates whose max avg DTW within the window exceeds this; negative disables (default: preset; standard `5.0`, on when `> 0`). |
+| `--dtw-window-m` | Sliding DTW window length in meters; negative disables (default: preset; normal `30.0`, on when `> 0`). |
+| `--dtw-window-max-avg` | Reject candidates whose max avg DTW within the window exceeds this; negative disables (default: preset; normal `5.0`, on when `> 0`). |
 | `--dtw-penalty` | DTW penalty: `linear`, `quadratic`, `huber` (default `linear`). |
 | `--dtw-penalty-scale-m` | Scale for quadratic DTW penalty (meters, default `10.0`). |
 | `--dtw-penalty-huber-k` | Huber k parameter for DTW penalty (meters, default `5.0`). |
@@ -237,7 +237,7 @@ Markerized references are auto-detected and can use:
 | `--crossing-shape-window-frac` | Local shape window fraction of resample count (default `0.2`). |
 | `--crossing-shape-window-min` | Minimum window size for local crossing shape matching (default `3`). |
 | `--crossing-length-weight` | Length weight for crossing selection (negative = auto, default `-1.0`). |
-| `--crossing-window-max` | Maximum along-track search distance on either side of each start/finish boundary, in meters (on by default: `20.0` for tight/standard/normal-widetrack/none, `100.0` for loose, `200.0` for loosest). Accepts decimals; `0` allows only a crossing exactly at the boundary. |
+| `--crossing-window-max` | Maximum along-track search distance on either side of each start/finish boundary, in meters (on by default: `20.0` for tight/normal/normal-widetrack/none, `100.0` for loose, `200.0` for loosest). Accepts decimals; `0` allows only a crossing exactly at the boundary. |
 | `--crossing-edge-window-s` | Start/end crossing search window in seconds (default `1.0`, uses median sampling rate). |
 | `--crossing-expand-mode` | Crossing search expansion mode when no crossings are found (`fixed` or `ratio`, default `ratio`). |
 | `--crossing-expand-k` | Scale factor for ratio-based crossing expansion (default `1.0`). |
@@ -396,7 +396,7 @@ python3 tests/tools/generate_synthetic_data.py \
 - **`--line-length-m`** controls how wide the finite line segment is.
 - Default 8m matches typical GPS +-4m accuracy.
 - Use smaller values for kink-heavy segments that intersect the line multiple times.
-- `--crossing-window-max` limits how far along the recording boundary searches may travel (standard default 20 m each side; loose 100 m; loosest 200 m). It is independent of the line's physical width and the spatial envelope.
+- `--crossing-window-max` limits how far along the recording boundary searches may travel (normal default 20 m each side; loose 100 m; loosest 200 m). It is independent of the line's physical width and the spatial envelope.
 
 ### Strict Envelope + DTW Window Presets
 See the **Matching Presets** section for defaults and guidance.

@@ -68,7 +68,7 @@ class CrossingDistanceTests(unittest.TestCase):
         self.assertEqual(self.crossings([0., 20.], 0, 0.0), [])
 
     def test_profiles_use_meter_default_and_preserve_override(self):
-        for profile in ('none', 'tight', 'standard', 'normal-widetrack', 'loose', 'loosest'):
+        for profile in ('none', 'tight', 'normal', 'standard', 'normal-widetrack', 'loose', 'loosest'):
             for override in (None, 7.5):
                 with self.subTest(profile=profile, override=override):
                     args = argparse.Namespace(matching_preset=profile, crossing_window_max=override,
@@ -79,23 +79,52 @@ class CrossingDistanceTests(unittest.TestCase):
                     defaults = {'loose': 100.0, 'loosest': 200.0}
                     self.assertEqual(args.crossing_window_max, defaults.get(profile, 20.0) if override is None else override)
 
-    def test_normal_widetrack_only_changes_standard_envelope(self):
+    def test_normal_widetrack_only_changes_normal_envelope(self):
         for envelope_override in (None, 7.5):
             with self.subTest(envelope_override=envelope_override):
                 defaults = dict(crossing_window_max=None, strict_envelope_window_m=None,
                                 strict_envelope_off_pct=None, envelope_max_m=envelope_override,
                                 dtw_window_m=None, dtw_window_max_avg=None, gps_error_m=12.0)
-                standard = argparse.Namespace(matching_preset='standard', **defaults)
+                normal = argparse.Namespace(matching_preset='normal', **defaults)
                 wide = argparse.Namespace(matching_preset='normal-widetrack', **defaults)
-                self.geometry.apply_matching_preset(standard)
+                self.geometry.apply_matching_preset(normal)
                 self.geometry.apply_matching_preset(wide)
                 self.assertEqual(wide.envelope_max_m, 10.0 if envelope_override is None else envelope_override)
-                standard_values = vars(standard).copy()
+                normal_values = vars(normal).copy()
                 wide_values = vars(wide).copy()
                 for key in ('matching_preset', 'envelope_max_m'):
-                    standard_values.pop(key)
+                    normal_values.pop(key)
                     wide_values.pop(key)
-                self.assertEqual(wide_values, standard_values)
+                self.assertEqual(wide_values, normal_values)
+
+    def test_standard_is_a_legacy_alias_for_normal(self):
+        for explicit in (None, 7.5):
+            with self.subTest(explicit=explicit):
+                values = dict(crossing_window_max=explicit, strict_envelope_window_m=explicit,
+                              strict_envelope_off_pct=explicit, envelope_max_m=explicit,
+                              dtw_window_m=explicit, dtw_window_max_avg=explicit, gps_error_m=12.0)
+                normal = argparse.Namespace(matching_preset='normal', **values)
+                legacy = argparse.Namespace(matching_preset='standard', **values)
+                self.geometry.apply_matching_preset(normal)
+                self.geometry.apply_matching_preset(legacy)
+                self.assertEqual(normal.envelope_max_m, 5.0 if explicit is None else explicit)
+                self.assertEqual({key: value for key, value in vars(normal).items() if key != 'matching_preset'},
+                                 {key: value for key, value in vars(legacy).items() if key != 'matching_preset'})
+
+    def test_cli_defaults_to_normal_and_accepts_legacy_name(self):
+        path = Path(__file__).resolve().parents[1] / 'gpx-segment-timer.py'
+        tree = ast.parse(path.read_text())
+        main = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'main')
+        option = next(node for node in ast.walk(main) if isinstance(node, ast.Call)
+                      and isinstance(node.func, ast.Attribute) and node.func.attr == 'add_argument'
+                      and any(isinstance(arg, ast.Constant) and arg.value == '--matching-preset' for arg in node.args))
+        parser = argparse.ArgumentParser()
+        namespace = {'parser': parser}
+        option_module = ast.fix_missing_locations(ast.Module(body=[ast.Expr(value=option)], type_ignores=[]))
+        exec(compile(option_module, str(path), 'exec'), namespace)
+        self.assertEqual(parser.parse_args([]).matching_preset, 'normal')
+        for profile in ('normal', 'standard', 'normal-widetrack'):
+            self.assertEqual(parser.parse_args(['--matching-preset', profile]).matching_preset, profile)
 
     def test_debug_fallback_respects_distance_cap(self):
         path = Path(__file__).resolve().parents[1] / 'tools/debug_match_metrics.py'
