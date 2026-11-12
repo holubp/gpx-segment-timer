@@ -67,19 +67,20 @@ Presets set defaults for strict envelope, DTW sliding windows, and crossing-sear
 
 Preset summary:
 
-| Parameter | `tight` | `standard` | `loose` | `loosest` |
-|-----------|---------|------------|---------|-----------|
-| `strict-envelope-window-m` | 30.0 | 30.0 | 30.0 | 30.0 |
-| `strict-envelope-off-pct` | 0.2 | 0.2 | 0.2 | 0.2 |
-| `envelope-max-m` | 2.0 | 5.0 | 10.0 | 50.0 |
-| `dtw-window-m` | 30.0 | 30.0 | 30.0 | 30.0 |
-| `dtw-window-max-avg` | 1.5 | 5.0 | 15.0 | 25.0 |
-| `gps-error-m` | 12.0 | 12.0 | 12.0 | 24.0 |
-| `crossing-window-max` (meters) | 20.0 | 20.0 | 100.0 | 200.0 |
+| Parameter | `tight` | `standard` | `normal-widetrack` | `loose` | `loosest` |
+|-----------|---------|------------|-------------------|---------|-----------|
+| `strict-envelope-window-m` | 30.0 | 30.0 | 30.0 | 30.0 | 30.0 |
+| `strict-envelope-off-pct` | 0.2 | 0.2 | 0.2 | 0.2 | 0.2 |
+| `envelope-max-m` | 2.0 | 5.0 | 10.0 | 10.0 | 50.0 |
+| `dtw-window-m` | 30.0 | 30.0 | 30.0 | 30.0 | 30.0 |
+| `dtw-window-max-avg` | 1.5 | 5.0 | 5.0 | 15.0 | 25.0 |
+| `gps-error-m` | 12.0 | 12.0 | 12.0 | 12.0 | 24.0 |
+| `crossing-window-max` (meters) | 20.0 | 20.0 | 20.0 | 100.0 | 200.0 |
 
 Preset intent:
 - **`tight`**: packed tracks with similar shapes (e.g., Jinacovice).
 - **`standard`**: general-purpose default.
+- **`normal-widetrack`**: standard matching with a wider corridor (10 m on each side), useful for motocross tracks. All other settings are identical to `standard`.
 - **`loose`**: noisy/forested tracks; allows more drift.
 - **`loosest`**: extreme GPS drift; consider enabling x-track gates (`--prefilter-xtrack-p95-m`, `--prefilter-xtrack-max-m`, `--final-xtrack-p95-m`, `--final-xtrack-max-m`).
 - **`none`**: skip preset defaults; use explicit flags or legacy defaults. The crossing-search cap remains 20 m unless overridden.
@@ -89,7 +90,11 @@ Examples:
 ```
 ./gpx-segment-timer.py -v -f segments -r example.gpx --matching-preset tight
 ./gpx-segment-timer.py -v -f segments -r example.gpx --matching-preset loose
+./gpx-segment-timer.py -v -f segments -r example.gpx --matching-preset normal-widetrack
 ```
+
+Profile settings are defined in `apply_matching_preset()` in `gpx-segment-timer.py`.
+`normal-widetrack` is equivalent to `--matching-preset standard --envelope-max-m 10`.
 
 ---
 
@@ -159,7 +164,7 @@ This supports marker-only references like `segments/semmering.gpx` with waypoint
 
 | Option | Description |
 |--------|-------------|
-| `--matching-preset` | Preset defaults for strict envelope + DTW window (`standard`, `tight`, `loose`, `loosest`, `none`; default `standard`). |
+| `--matching-preset` | Preset defaults for strict envelope, DTW window and crossing cap (`standard`, `normal-widetrack`, `tight`, `loose`, `loosest`, `none`; default `standard`). |
 | `--candidate-margin` | Relative distance tolerance for candidates (default `0.2`). |
 | `--candidate-endpoint-margin-m` | Start/end bbox margin for candidate selection (meters); negative uses `--gps-error-m` (default `-1.0`). |
 | `--bbox-margin` | Endpoint deviation tolerance in meters (default `30`); overall bbox margin is `--bbox-margin * 3.33`. |
@@ -232,7 +237,7 @@ Markerized references are auto-detected and can use:
 | `--crossing-shape-window-frac` | Local shape window fraction of resample count (default `0.2`). |
 | `--crossing-shape-window-min` | Minimum window size for local crossing shape matching (default `3`). |
 | `--crossing-length-weight` | Length weight for crossing selection (negative = auto, default `-1.0`). |
-| `--crossing-window-max` | Maximum along-track search distance on either side of each start/finish boundary, in meters (on by default: `20.0` for tight/standard/none, `100.0` for loose, `200.0` for loosest). Accepts decimals; `0` allows only a crossing exactly at the boundary. |
+| `--crossing-window-max` | Maximum along-track search distance on either side of each start/finish boundary, in meters (on by default: `20.0` for tight/standard/normal-widetrack/none, `100.0` for loose, `200.0` for loosest). Accepts decimals; `0` allows only a crossing exactly at the boundary. |
 | `--crossing-edge-window-s` | Start/end crossing search window in seconds (default `1.0`, uses median sampling rate). |
 | `--crossing-expand-mode` | Crossing search expansion mode when no crossings are found (`fixed` or `ratio`, default `ratio`). |
 | `--crossing-expand-k` | Scale factor for ratio-based crossing expansion (default `1.0`). |

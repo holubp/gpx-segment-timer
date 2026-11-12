@@ -68,7 +68,7 @@ class CrossingDistanceTests(unittest.TestCase):
         self.assertEqual(self.crossings([0., 20.], 0, 0.0), [])
 
     def test_profiles_use_meter_default_and_preserve_override(self):
-        for profile in ('none', 'tight', 'standard', 'loose', 'loosest'):
+        for profile in ('none', 'tight', 'standard', 'normal-widetrack', 'loose', 'loosest'):
             for override in (None, 7.5):
                 with self.subTest(profile=profile, override=override):
                     args = argparse.Namespace(matching_preset=profile, crossing_window_max=override,
@@ -78,6 +78,24 @@ class CrossingDistanceTests(unittest.TestCase):
                     self.geometry.apply_matching_preset(args)
                     defaults = {'loose': 100.0, 'loosest': 200.0}
                     self.assertEqual(args.crossing_window_max, defaults.get(profile, 20.0) if override is None else override)
+
+    def test_normal_widetrack_only_changes_standard_envelope(self):
+        for envelope_override in (None, 7.5):
+            with self.subTest(envelope_override=envelope_override):
+                defaults = dict(crossing_window_max=None, strict_envelope_window_m=None,
+                                strict_envelope_off_pct=None, envelope_max_m=envelope_override,
+                                dtw_window_m=None, dtw_window_max_avg=None, gps_error_m=12.0)
+                standard = argparse.Namespace(matching_preset='standard', **defaults)
+                wide = argparse.Namespace(matching_preset='normal-widetrack', **defaults)
+                self.geometry.apply_matching_preset(standard)
+                self.geometry.apply_matching_preset(wide)
+                self.assertEqual(wide.envelope_max_m, 10.0 if envelope_override is None else envelope_override)
+                standard_values = vars(standard).copy()
+                wide_values = vars(wide).copy()
+                for key in ('matching_preset', 'envelope_max_m'):
+                    standard_values.pop(key)
+                    wide_values.pop(key)
+                self.assertEqual(wide_values, standard_values)
 
     def test_debug_fallback_respects_distance_cap(self):
         path = Path(__file__).resolve().parents[1] / 'tools/debug_match_metrics.py'
