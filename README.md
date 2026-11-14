@@ -63,7 +63,7 @@ pip install gpxpy fastdtw openpyxl
 
 ## Matching Presets (recommended first)
 
-Presets set defaults for strict envelope, DTW sliding windows, and crossing-search limits. Any explicit flag overrides the preset value. Default preset is `normal`. The old name `standard` remains available as an equivalent legacy alias.
+Presets set defaults for strict envelope, DTW sliding windows, crossing-search limits, and iterative refinement radii. Any explicit flag overrides the preset value. Default preset is `normal`. The old name `standard` remains available as an equivalent legacy alias.
 
 Preset summary:
 
@@ -76,6 +76,7 @@ Preset summary:
 | `dtw-window-max-avg` | 1.5 | 5.0 | 5.0 | 15.0 | 25.0 |
 | `gps-error-m` | 12.0 | 12.0 | 12.0 | 12.0 | 24.0 |
 | `crossing-window-max` (meters) | 20.0 | 20.0 | 20.0 | 100.0 | 200.0 |
+| `iterative-window-start/end` (meters) | 50.0 | 50.0 | 50.0 | 200.0 | 200.0 |
 
 Preset intent:
 - **`tight`**: packed tracks with similar shapes (e.g., Jinacovice).
@@ -83,7 +84,7 @@ Preset intent:
 - **`normal-widetrack`**: normal matching with a wider corridor (10 m on each side), useful for motocross tracks. All other settings are identical to `normal`.
 - **`loose`**: noisy/forested tracks; allows more drift.
 - **`loosest`**: extreme GPS drift; consider enabling x-track gates (`--prefilter-xtrack-p95-m`, `--prefilter-xtrack-max-m`, `--final-xtrack-p95-m`, `--final-xtrack-max-m`).
-- **`none`**: skip preset defaults; use explicit flags or legacy defaults. The crossing-search cap remains 20 m unless overridden.
+- **`none`**: skip preset defaults; use explicit flags or legacy defaults. The crossing-search cap remains 20 m and iterative windows remain 50 m unless overridden.
 
 Examples:
 
@@ -116,9 +117,17 @@ Marker modes are selected automatically per reference GPX file and bypass DTW sh
 - Trap points:
   - Any marker point named `trap*` creates additional consecutive subsegments:
     `start->trap1`, `trap1->trap2`, ..., `trapN->finish`.
+  - Each complete trap visit uses the midpoint of its interpolated circle entry and exit, with the timestamp halfway between their times. Adjacent subsegments share this event; there is no timing gap while inside the trap circle.
+  - This works with many, one, or no recorded points inside the circle. Tangent contact also counts for traps: entry and exit coincide. A visit missing its entry or exit does not produce a trap midpoint.
+
+For a curved passage, the trap coordinate is the entry/exit **chord midpoint**, which can lie off the recorded path. Its timing is the average of the two boundary times, not the time of the sample nearest the center. Distances follow the original recorded path at that time. If timestamps are unavailable, the mapping uses the visit's half-distance position and does not invent a timestamp. If either timed end of a trap subsegment is unavailable, its duration stays unavailable rather than falling back to surrounding raw sample times. Start and finish circles still use exit and entry respectively; their tangencies do not count as crossings.
+
+Trap GPX exports show entry, midpoint and exit in the crossing track, plus separate entry/exit tracks retaining the original bracketing samples. The table's trap indices bracket its midpoint time where timestamps are usable, or its half-distance mapping otherwise. Trap deviation is measured from the midpoint to the trap center; ordinary start/finish deviation remains relative to the circle boundary.
 
 Marker labels can be defined in GPX `name`, `desc/description`, or `cmt/comment`.
 This supports marker-only references like `segments/semmering.gpx` with waypoint descriptions.
+
+Circle crossings are interpolated on the edges between original recorded points. A passage can therefore be detected even when both surrounding samples lie outside the circle. For ordinary start/finish circles, tangent contact alone is not an entry; re-entry is checked in event order, including multiple events within one sample interval. Timing remains **start-circle exit to finish-circle entry**. It does not use the point closest to the circle center. The exported recording retains original samples; sparse passages may include bracketing points outside the timed interval. Point-mode detected distance is measured between the interpolated boundaries. Its minimum-length check accounts for the start/finish circle radii omitted by exit-to-entry timing, rather than depending on which samples bracket those events.
 
 ---
 
@@ -211,11 +220,11 @@ Markerized references are auto-detected and can use:
 |--------|-------------|
 | `--allow-length-mismatch` | Allow candidates outside length window (default: off). |
 | `--min-length-ratio` | Reject matches shorter than this fraction of reference length; `0` disables (default `0.8`, on). |
-| `--endpoint-window-start` | Start endpoint sliding window in meters (default `10.0`, converted to points using cumulative distance). |
-| `--endpoint-window-end` | End endpoint sliding window in meters (default `10.0`, converted to points using cumulative distance). |
+| `--endpoint-window-start` | Start endpoint search radius in meters (default `10.0`, on); each side is bounded independently. `0` restricts it to the same along-track position. |
+| `--endpoint-window-end` | Finish endpoint search radius in meters (default `10.0`, on); independent bounds retain all original samples within the radius. |
 | `--endpoint-spatial-weight` | Spatial weight in endpoint refinement (default `0.25`). |
-| `--iterative-window-start` | Start refinement window (default `20`). |
-| `--iterative-window-end` | End refinement window (default `20`). |
+| `--iterative-window-start` | Start refinement search radius in meters (on; default `50.0`, or `200.0` for loose/loosest); `0` restricts it to the same along-track position. |
+| `--iterative-window-end` | Finish refinement search radius in meters (on; default `50.0`, or `200.0` for loose/loosest); `0` restricts it to the same along-track position. |
 | `--penalty-weight` | Endpoint distance penalty during refinement (default `2.0`). |
 | `--anchor-beta1` | Start subsegment weight (default `1.0`). |
 | `--anchor-beta2` | End subsegment weight (default `1.0`). |
@@ -227,6 +236,10 @@ Markerized references are auto-detected and can use:
 | `--no-refinement` | Disable refinement steps (default: off). |
 | `--skip-endpoint-checks` | Keep matches even if endpoint diffs exceed `--bbox-margin` (default: off). |
 
+Original coordinates, timestamps and indices are retained throughout matching. Endpoint and crossing shape comparisons use separate distance-based copies with cached mappings to the original samples. Local endpoint context spans 10% of reference distance; crossing context uses `--crossing-shape-window-frac`. Increasing the recording frequency does not shorten these physical contexts. This does not change the whole-segment DTW scoring or remove GPS jitter from measured lengths.
+
+**Migration:** `--iterative-window-start/end` now accept meters, including decimal values, instead of raw point counts. A previous value of `20` now means 20 m. Do not convert old values using Hz alone: riding speed also matters. The defaults were checked against the validated automotodrom and Jinacovice recordings.
+
 ### Start/Finish Crossing Logic
 
 | Option | Description |
@@ -234,11 +247,11 @@ Markerized references are auto-detected and can use:
 | `--line-length-m` | Start/finish line total length in meters (default `8.0`). |
 | `--crossing-endpoint-weight` | Endpoint proximity weight when selecting crossings (default `1.0`). |
 | `--crossing-shape-weight` | Shape weight when selecting crossings (default `1.0`). |
-| `--crossing-shape-window-frac` | Local shape window fraction of resample count (default `0.2`). |
-| `--crossing-shape-window-min` | Minimum window size for local crossing shape matching (default `3`). |
+| `--crossing-shape-window-frac` | Local shape context as a fraction of reference distance (default `0.2`, on; valid range `(0, 1]`); also sets the comparison sample budget. |
+| `--crossing-shape-window-min` | Minimum number of comparison samples for crossing shape matching (default `3`); not a count of original recorded points. |
 | `--crossing-length-weight` | Length weight for crossing selection (negative = auto, default `-1.0`). |
 | `--crossing-window-max` | Maximum along-track search distance on either side of each start/finish boundary, in meters (on by default: `20.0` for tight/normal/normal-widetrack/none, `100.0` for loose, `200.0` for loosest). Accepts decimals; `0` allows only a crossing exactly at the boundary. |
-| `--crossing-edge-window-s` | Start/end crossing search window in seconds (default `1.0`, uses median sampling rate). |
+| `--crossing-edge-window-s` | Initial crossing search radius in seconds (default `1.0`, on), measured using actual timestamps and interpolated crossing times; `<=0` disables the time limit while retaining the meter cap. |
 | `--crossing-expand-mode` | Crossing search expansion mode when no crossings are found (`fixed` or `ratio`, default `ratio`). |
 | `--crossing-expand-k` | Scale factor for ratio-based crossing expansion (default `1.0`). |
 
@@ -257,6 +270,12 @@ and fallback crossing-pair searches. A sample just beyond the limit may bracket 
 interpolated crossing, but the crossing itself must be inside the limit. Increasing
 `--endpoint-window-start/end` does not override this cap. The cap applies to shape
 matching; explicit marker modes search their named boundaries directly.
+
+The initial seconds window and the maximum distance cap are independent. Initial searches check actual interpolated times rather than converting seconds through a median recording rate. Missing timestamps or reversed bracket times fall back to the meter cap for the affected crossing (diagnostic details at debug level). If the initial search finds no crossing, `fixed` expansion uses the corresponding endpoint radius in meters; `ratio` expansion uses reference length and detected/reference length ratio. Both remain bounded by `--crossing-window-max`.
+
+If refinement loses a start or finish crossing, the matcher can restore the original DTW candidate when it adds a valid crossing without losing any already observed end, within the same configured caps and endpoint margins. The recovered interval must remain forward in recording order; an unobserved end retains its original sample boundary. It does not widen the search limits to recover a missing crossing.
+
+The debug metrics tool uses the same time/distance searches and physical shape context. Its verbose metrics identify seconds and meters explicitly; legacy point-count window values from old logs are not used as physical limits.
 
 The debug tool uses the same meter cap and reports `crossing_window_max_m`.
 When importing older logs, it ignores their point-based crossing cap and warns;

@@ -401,6 +401,62 @@ def resample_points(points: List[Dict[str, Any]], num_samples: int) -> List[Tupl
     #logging.debug("Resampled from %d to %d points.", len(points), num_samples)
     return new_pts
 
+def sample_distance_interval(points: List[Dict[str, Any]], cumulative: List[float],
+                             start_m: float, end_m: float, count: int) -> Tuple[Tuple[Tuple[float, float], ...], Tuple[float, ...]]:
+    """Sample a physical comparison interval and map it to original sample indices.
+
+    Returns immutable latitude/longitude samples and fractional original indices.
+    Only the comparison copy is resampled. Interpolating across an original edge
+    does not assert that additional measurements exist within a recording gap.
+    """
+    if not points or len(cumulative) != len(points):
+        raise ValueError('Distance sampling requires one cumulative distance per point.')
+    if count < 2 or not math.isfinite(start_m) or not math.isfinite(end_m):
+        raise ValueError('Distance sampling requires finite bounds and at least two samples.')
+    if start_m < cumulative[0] - 1e-6 or end_m > cumulative[-1] + 1e-6 or end_m < start_m:
+        raise ValueError('Comparison interval is outside the recorded polyline.')
+    samples, positions = [], []
+    for k in range(count):
+        target = max(cumulative[0], min(cumulative[-1], start_m + (end_m - start_m) * k / (count - 1)))
+        left = min(len(points) - 1, max(0, bisect.bisect_right(cumulative, target) - 1))
+        if left == len(points) - 1:
+            samples.append((points[left]['lat'], points[left]['lon']))
+            positions.append(float(left))
+            continue
+        length = cumulative[left + 1] - cumulative[left]
+        fraction = 0.0 if length <= 0 else (target - cumulative[left]) / length
+        a, b = points[left], points[left + 1]
+        samples.append((a['lat'] + fraction * (b['lat'] - a['lat']),
+                        a['lon'] + fraction * (b['lon'] - a['lon'])))
+        positions.append(left + fraction)
+    return tuple(samples), tuple(positions)
+
+
+def make_distance_sampler(points: List[Dict[str, Any]], cumulative: List[float],
+                           max_entries: int = 256) -> Any:
+    """Create a bounded comparison cache scoped to one immutable source polyline.
+
+    Keys include exact distance bounds and comparison count. Each result retains
+    its original-index mapping. FIFO eviction bounds memory independently of
+    recording length; independent references own separate caches.
+    """
+    if max_entries < 1:
+        raise ValueError('Comparison cache must hold at least one interval.')
+    distances = cumulative[:len(points)]
+    cache: Dict[Tuple[float, float, int], Any] = {}
+
+    def sample(start_m: float, end_m: float, count: int) -> Any:
+        key = (start_m, end_m, count)
+        if key not in cache:
+            result = sample_distance_interval(points, distances, start_m, end_m, count)
+            if len(cache) >= max_entries:
+                del cache[next(iter(cache))]
+            cache[key] = result
+        return cache[key]
+
+    return sample
+
+
 def compute_resample_count(points: List[Dict[str, Any]],
                            target_spacing_m: float,
                            max_points: int) -> int:
@@ -613,6 +669,11 @@ def apply_matching_preset(args: argparse.Namespace) -> None:
     }
     presets["standard"] = presets["normal"]
     presets["normal-widetrack"] = {**presets["normal"], "envelope_max_m": 10.0}
+    # Physical defaults are calibrated independently from the historical 20 samples.
+    iterative_default_m = 200.0 if args.matching_preset in ('loose', 'loosest') else 50.0
+    for key in ('iterative_window_start', 'iterative_window_end'):
+        if hasattr(args, key) and getattr(args, key) is None:
+            setattr(args, key, iterative_default_m)
     if args.crossing_window_max is None:
         args.crossing_window_max = presets.get(args.matching_preset, {}).get('crossing_window_max', 20.0)
     if args.matching_preset == "none":
@@ -672,11 +733,16 @@ def find_line_crossings(recorded_points: List[Dict[str, Any]],
         if d0 == 0.0 and d1 == 0.0:
             continue
         if d0 == 0.0:
+            # The preceding edge already emitted this exact on-line vertex.
+            # Counting it twice makes event counts depend on sample placement.
+            if crossings and crossings[-1]['idx1'] == i:
+                continue
             if line_half_len is not None and abs(t0) > line_half_len:
                 continue
             crossings.append({
                 "idx0": i,
                 "idx1": i,
+                "fraction": 0.0,
                 "lat": p0["lat"],
                 "lon": p0["lon"],
                 "time": p0.get("time"),
@@ -698,6 +764,7 @@ def find_line_crossings(recorded_points: List[Dict[str, Any]],
             crossings.append({
                 "idx0": i,
                 "idx1": i + 1,
+                "fraction": t,
                 "lat": lat,
                 "lon": lon,
                 "time": interp_time,
@@ -764,36 +831,311 @@ def find_line_crossings_in_distance_window(
     return accepted
 
 
-def _circle_crossing(recorded_points: List[Dict[str, Any]],
-                     center: Tuple[float, float],
-                     radius_m: float,
-                     idx0: int,
-                     idx1: int) -> Dict[str, Any]:
-    p0 = recorded_points[idx0]
-    p1 = recorded_points[idx1]
-    d0 = haversine_distance((p0["lat"], p0["lon"]), center) - radius_m
-    d1 = haversine_distance((p1["lat"], p1["lon"]), center) - radius_m
-    denom = d0 - d1
-    if abs(denom) < 1e-9:
-        t = 0.5
-    else:
-        t = d0 / denom
-    t = max(0.0, min(1.0, t))
-    lat = p0["lat"] + (p1["lat"] - p0["lat"]) * t
-    lon = p0["lon"] + (p1["lon"] - p0["lon"]) * t
-    time0 = p0.get("time")
-    time1 = p1.get("time")
-    interp_time = None
-    if time0 and time1:
-        interp_time = time0 + (time1 - time0) * t
-    return {
-        "idx0": idx0,
-        "idx1": idx1,
-        "lat": lat,
-        "lon": lon,
-        "time": interp_time,
-        "interp": True,
-    }
+def crossing_distance_along_track(points: List[Dict[str, Any]], cumulative: List[float],
+                                   crossing: Dict[str, Any]) -> float:
+    """Locate an interpolated crossing along its original recorded edge in meters."""
+    if 'along_track_m' in crossing:
+        # Trap chord midpoints need not lie on the original bent trajectory.
+        return crossing['along_track_m']
+    first, last = crossing['idx0'], crossing['idx1']
+    a, b = points[first], points[last]
+    edge_m = haversine_distance((a['lat'], a['lon']), (b['lat'], b['lon']))
+    fraction = (0.0 if edge_m == 0 else min(1.0, haversine_distance(
+        (a['lat'], a['lon']), (crossing['lat'], crossing['lon'])) / edge_m))
+    return cumulative[first] + fraction * (cumulative[last] - cumulative[first])
+
+
+def distance_window_bounds(cumulative: List[float], center_idx: int,
+                           radius_m: float) -> Tuple[int, int]:
+    """Return independent inclusive/exclusive original-sample bounds in meters.
+
+    The cumulative sequence is nondecreasing, with one entry per sample. A zero
+    radius includes colocated samples; negative or nonfinite radii are invalid.
+    This selects candidate samples, so it adds no samples outside the radius.
+    Crossing interpolation uses its separate bracketing-aware search helper.
+    """
+    if not math.isfinite(radius_m) or radius_m < 0:
+        raise ValueError('Distance window radius must be finite and nonnegative.')
+    if not 0 <= center_idx < len(cumulative):
+        raise ValueError('Distance window center is outside the recorded track.')
+    position = cumulative[center_idx]
+    return (bisect.bisect_left(cumulative, position - radius_m),
+            bisect.bisect_right(cumulative, position + radius_m))
+
+
+def find_line_crossings_in_time_window(
+        points: List[Dict[str, Any]], cumulative: List[float],
+        anchor: Tuple[float, float], normal: Tuple[float, float],
+        center_idx: int, max_distance_m: float, lat_scale: float,
+        window_s: float, line_half_len: Optional[float] = None) -> List[Dict[str, Any]]:
+    """Apply a local seconds window to interpolated, distance-capped crossings.
+
+    All original edges within the independent meter cap are inspected, including
+    brackets outside the seconds window. Actual timestamps determine eligibility;
+    no median interval or nominal recording frequency is used. A nonpositive
+    window disables the time limit. Missing timestamps or reversed bracket times
+    fall back to the meter limit for the affected crossing, logged at DEBUG.
+    """
+    if not math.isfinite(window_s):
+        raise ValueError('Crossing time window must be finite.')
+    crossings = find_line_crossings_in_distance_window(
+        points, cumulative, anchor, normal, center_idx, max_distance_m,
+        lat_scale, line_half_len)
+    center_time = points[center_idx].get('time') if points else None
+    if window_s <= 0 or center_time is None:
+        return crossings
+    accepted = []
+    for crossing in crossings:
+        t0 = points[crossing['idx0']].get('time')
+        t1 = points[crossing['idx1']].get('time')
+        stamp = crossing.get('time')
+        if stamp is None or t0 is None or t1 is None or t1 < t0:
+            logging.debug('Crossing time window unavailable at [%d,%d]; using meter cap.',
+                          crossing['idx0'], crossing['idx1'])
+            accepted.append(crossing)
+        elif abs((stamp - center_time).total_seconds()) <= window_s + 1e-6:
+            accepted.append(crossing)
+    return accepted
+
+
+def select_crossing_window(refined: Tuple[int, int], original: Tuple[int, int],
+                            evaluate: Any, endpoint_margin_m: float) -> Tuple[Tuple[int, int], Tuple[Any, ...], bool]:
+    """Retain original crossing events when refinement loses an end.
+
+    The evaluator applies the same configured time/distance crossing searches to
+    either window and returns (start_coords, end_coords, start_diff, end_diff,
+    start_crossing, end_crossing). An original DTW candidate must strictly add
+    a crossing without losing any refined crossing, retain acceptable endpoint
+    distances, and produce a forward interval. An unobserved end uses its
+    original sample boundary. This never expands caps or shares candidates.
+    """
+    metrics = evaluate(*refined)
+    if refined != original and (metrics[4] is None or metrics[5] is None):
+        original_metrics = evaluate(*original)
+        refined_mask = int(metrics[4] is not None) | (int(metrics[5] is not None) << 1)
+        original_mask = int(original_metrics[4] is not None) | (int(original_metrics[5] is not None) << 1)
+        if (original_mask != refined_mask and original_mask & refined_mask == refined_mask
+                and original_metrics[2] <= endpoint_margin_m
+                and original_metrics[3] <= endpoint_margin_m):
+            start, finish = original_metrics[4:6]
+            start_position = (start['idx0'] + start.get('fraction', 0.) * (start['idx1'] - start['idx0'])
+                              if start is not None else float(original[0]))
+            end_position = (finish['idx0'] + finish.get('fraction', 0.) * (finish['idx1'] - finish['idx0'])
+                            if finish is not None else float(original[1] - 1))
+            if end_position > start_position:
+                return original, original_metrics, True
+    return refined, metrics, False
+
+
+def _circle_visits(recorded_points: List[Dict[str, Any]],
+                   center: Tuple[float, float], radius_m: float,
+                   include_touches: bool = False) -> List[Tuple[float, float]]:
+    """Return inside intervals on the original polyline as fractional sample indices.
+
+    A local spherical-Earth tangent plane uses the same radius as haversine_distance.
+    Positive-length intervals are merged across edges, including stationary samples;
+    a tangent contact alone is not an entry unless include_touches is requested
+    for trap timing. No recorded samples are discarded.
+    """
+    if not math.isfinite(radius_m) or radius_m <= 0:
+        raise ValueError('Marker circle radius must be finite and positive.')
+    scale = 6371000.0 * math.pi / 180.0
+    cos_lat = math.cos(math.radians(center[0]))
+    xy = [((p['lon'] - center[1]) * scale * cos_lat,
+           (p['lat'] - center[0]) * scale) for p in recorded_points]
+    visits: List[Tuple[float, float]] = []
+    for i, ((x, y), (u, v)) in enumerate(zip(xy, xy[1:])):
+        dx, dy = u - x, v - y
+        aa = dx * dx + dy * dy
+        cc = x * x + y * y - radius_m * radius_m
+        if aa <= 1e-24:
+            if cc >= 0 and not (include_touches and abs(cc) <= 1e-10):
+                continue
+            lo, hi = 0.0, 1.0
+        else:
+            bb = 2.0 * (x * dx + y * dy)
+            disc = bb * bb - 4.0 * aa * cc
+            tolerance = 1e-12 * aa * radius_m * radius_m
+            if disc <= tolerance:
+                if not include_touches or disc < -tolerance:
+                    continue
+                disc = 0.0
+            root = math.sqrt(disc)
+            lo = max(0.0, (-bb - root) / (2.0 * aa))
+            hi = min(1.0, (-bb + root) / (2.0 * aa))
+        if hi - lo <= 1e-10:
+            if not include_touches or hi < lo - 1e-10:
+                continue
+            lo = hi = max(0.0, min(1.0, (lo + hi) / 2.0))
+        start, end = i + lo, i + hi
+        if visits and start <= visits[-1][1] + 1e-9:
+            visits[-1] = (visits[-1][0], end)
+        else:
+            visits.append((start, end))
+    return visits
+
+
+def _circle_event(recorded_points: List[Dict[str, Any]], position: float) -> Dict[str, Any]:
+    """Interpolate a circle boundary event using its original bracketing samples."""
+    idx0 = min(len(recorded_points) - 2, max(0, int(math.floor(position))))
+    idx1 = idx0 + 1
+    t = max(0.0, min(1.0, position - idx0))
+    p0, p1 = recorded_points[idx0], recorded_points[idx1]
+    time0, time1 = p0.get('time'), p1.get('time')
+    timestamp = time0 + (time1 - time0) * t if time0 is not None and time1 is not None else None
+    return dict(idx0=idx0, idx1=idx1,
+                lat=p0['lat'] + t * (p1['lat'] - p0['lat']),
+                lon=p0['lon'] + t * (p1['lon'] - p0['lon']),
+                time=timestamp, interp=True)
+
+
+def _circle_midpoint(points: List[Dict[str, Any]], cumulative: List[float],
+                     lo: float, hi: float) -> Dict[str, Any]:
+    """Return the chord/time midpoint of a complete trap visit.
+
+    Coordinates average the interpolated entry/exit, even on a bent passage.
+    Original time brackets and along-track distance locate the timing event on
+    the recording independently of that virtual coordinate. Without usable
+    timestamps the mapping uses half the visit's along-track distance.
+    """
+    entry, exit_event = _circle_event(points, lo), _circle_event(points, hi)
+    entry_m = crossing_distance_along_track(points, cumulative, entry)
+    exit_m = crossing_distance_along_track(points, cumulative, exit_event)
+    target_m = (entry_m + exit_m) / 2.0
+    index = min(len(points)-2, max(0, bisect.bisect_right(cumulative, target_m)-1))
+    edge_m = cumulative[index+1]-cumulative[index]
+    position = index + (target_m-cumulative[index])/edge_m if edge_m > 0 else lo
+    stamp = None
+    if entry['time'] is not None and exit_event['time'] is not None and exit_event['time'] >= entry['time']:
+        stamp = entry['time'] + (exit_event['time']-entry['time'])/2
+        times = [points[i].get('time') for i in range(entry['idx0'], exit_event['idx1']+1)]
+        if all(t is not None for t in times) and all(a <= b for a,b in zip(times,times[1:])):
+            for i in range(entry['idx0'], exit_event['idx1']):
+                a, b = points[i]['time'], points[i+1]['time']
+                if a <= stamp <= b and b > a:
+                    position = i + (stamp-a).total_seconds()/(b-a).total_seconds()
+                    break
+    position = min(hi, max(lo, position))
+    event = _circle_event(points, position)
+    fraction = position-event['idx0']
+    event.update(lat=(entry['lat']+exit_event['lat'])/2,
+                 lon=(entry['lon']+exit_event['lon'])/2, time=stamp,
+                 position=position, trap_midpoint=True, entry=entry, exit=exit_event,
+                 along_track_m=cumulative[event['idx0']] + fraction *
+                 (cumulative[event['idx1']]-cumulative[event['idx0']]))
+    return event
+
+
+def _circle_marker_events(points: List[Dict[str, Any]], cumulative: List[float],
+                          center: Tuple[float, float], radius: float,
+                          timing: str) -> Tuple[List[Tuple[float, float]], List[Dict[str, Any]]]:
+    """Build midpoint/entry/exit events and retain visits for re-entry checks."""
+    midpoint = timing == 'midpoint'
+    visits = _circle_visits(points, center, radius, include_touches=midpoint)
+    scale = 6371000.*math.pi/180.
+    cos_lat = math.cos(math.radians(center[0]))
+    def xy(index):
+        return ((points[index]['lon']-center[1])*scale*cos_lat,
+                (points[index]['lat']-center[0])*scale)
+    first, last = xy(0), xy(len(points)-1)
+    first_on = abs(math.hypot(*first)-radius) <= 1e-6
+    last_on = abs(math.hypot(*last)-radius) <= 1e-6
+    def direction(index):
+        # Skip stationary endpoint samples when deciding whether a boundary
+        # intersection is entry or exit. No extrapolation beyond the record.
+        x,y = xy(index)
+        others = range(1,len(points)) if index == 0 else range(len(points)-2,-1,-1)
+        for other in others:
+            u,v = xy(other)
+            dx,dy = (u-x,v-y) if index == 0 else (x-u,y-v)
+            if dx*dx+dy*dy > 1e-24:
+                return x*dx+y*dy
+        return None
+    first_direction = direction(0) if first_on else None
+    last_direction = direction(len(points)-1) if last_on else None
+    if not midpoint:
+        # Reuse strict inside visits for ordinary endpoints: a stationary
+        # tangent interval must not become a start/finish crossing.
+        x,y = first; u,v = xy(1)
+        if timing == 'exit' and first_on and x*(u-x)+y*(v-y) > 1e-9:
+            visits.insert(0,(0.,0.))
+        x,y = last; u,v = xy(len(points)-2)
+        if timing == 'entry' and last_on and x*(u-x)+y*(v-y) > 1e-9:
+            visits.append((float(len(points)-1),float(len(points)-1)))
+    kept, events = [], []
+    for lo, hi in visits:
+        visit_index = len(kept)
+        kept.append((lo,hi))
+        if midpoint:
+            entry_known = lo > 1e-9 or (first_on and first_direction is not None and first_direction <= 1e-9)
+            exit_known = hi < len(points)-1-1e-9 or (last_on and last_direction is not None and last_direction >= -1e-9)
+        else:
+            entry_known = lo > 1e-9 or first_on
+            exit_known = hi < len(points)-1-1e-9 or last_on
+        if timing == 'midpoint':
+            if not entry_known or not exit_known:
+                continue
+            event = _circle_midpoint(points,cumulative,lo,hi)
+        else:
+            if not (exit_known if timing == 'exit' else entry_known):
+                continue
+            position = hi if timing == 'exit' else lo
+            event = _circle_event(points,position)
+            event['position'] = position
+        events.append(dict(visit_index=visit_index,lo=lo,hi=hi,event=event))
+    return kept,events
+
+
+def _find_trap_pair_matches(points: List[Dict[str, Any]],
+                            start_center: Tuple[float, float], finish_center: Tuple[float, float],
+                            start_radius: float, finish_radius: float,
+                            start_trap: bool, finish_trap: bool,
+                            circle_cache: Optional[Dict[Any, Any]] = None,
+                            cumulative: Optional[List[float]] = None) -> List[Any]:
+    """Pair visit-aware trap midpoint events without changing ordinary endpoints.
+
+    Re-entry into the start circle invalidates an earlier start. The first next
+    finish event is used, and a previous finish visit may not overlap the start.
+    Complete midpoint visits can overlap spatially; their event order must be
+    strictly forward. The cache is local to one recorded/reference pairing.
+    """
+    if len(points) < 2:
+        return []
+    if cumulative is None:
+        cumulative = [0.]
+        for a,b in zip(points,points[1:]):
+            cumulative.append(cumulative[-1]+haversine_distance((a['lat'],a['lon']),(b['lat'],b['lon'])))
+    cache = {} if circle_cache is None else circle_cache
+    def records(center, radius, timing):
+        key = (center,radius,timing)
+        if key not in cache:
+            cache[key] = _circle_marker_events(points,cumulative,center,radius,timing)
+        return cache[key]
+    start_visits, starts = records(start_center,start_radius,'midpoint' if start_trap else 'exit')
+    finish_visits, finishes = records(finish_center,finish_radius,'midpoint' if finish_trap else 'entry')
+    result, next_start = [], -1.0
+    finish_index = 0
+    for start in starts:
+        sc = start['event']; position = sc['position']
+        if position < next_start:
+            continue
+        while finish_index < len(finishes) and finishes[finish_index]['event']['position'] <= position+1e-9:
+            finish_index += 1
+        if finish_index == len(finishes):
+            break
+        finish = finishes[finish_index]; ec = finish['event']
+        visit_index = start['visit_index']
+        if visit_index+1 < len(start_visits) and start_visits[visit_index+1][0] <= ec['position']+1e-9:
+            continue
+        if finish['visit_index'] > 0 and finish_visits[finish['visit_index']-1][1] >= position-1e-9:
+            continue
+        s_distance = haversine_distance((sc['lat'],sc['lon']),start_center)
+        e_distance = haversine_distance((ec['lat'],ec['lon']),finish_center)
+        result.append((sc['idx0'],ec['idx1']+1,sc,ec,
+                       s_distance if start_trap else abs(s_distance-start_radius),
+                       e_distance if finish_trap else abs(e_distance-finish_radius)))
+        next_start = ec['position']
+    return result
 
 
 def _prefix_counts(flags: List[bool]) -> List[int]:
@@ -817,59 +1159,56 @@ def _find_point_pair_matches(recorded_points: List[Dict[str, Any]],
     n = len(recorded_points)
     if n < 2:
         return []
-    inside_start = [
-        haversine_distance((pt["lat"], pt["lon"]), start_center) <= start_radius_m
-        for pt in recorded_points
-    ]
-    inside_finish = [
-        haversine_distance((pt["lat"], pt["lon"]), finish_center) <= finish_radius_m
-        for pt in recorded_points
-    ]
-    pref_start = _prefix_counts(inside_start)
-    pref_finish = _prefix_counts(inside_finish)
-
-    start_leave: List[Dict[str, Any]] = []
-    finish_enter: List[Dict[str, Any]] = []
-    for i in range(n - 1):
-        if inside_start[i] and not inside_start[i + 1]:
-            start_leave.append(_circle_crossing(recorded_points, start_center, start_radius_m, i, i + 1))
-        if (not inside_finish[i]) and inside_finish[i + 1]:
-            finish_enter.append(_circle_crossing(recorded_points, finish_center, finish_radius_m, i, i + 1))
-
-    matches: List[Tuple[int, int, Dict[str, Any], Dict[str, Any], float, float]] = []
-    if not start_leave or not finish_enter:
-        return matches
-
-    finish_i = 0
-    next_allowed_start = 0
-    for s_cross in start_leave:
-        s_idx = s_cross["idx1"]
-        if s_idx < next_allowed_start:
-            continue
-        while finish_i < len(finish_enter) and finish_enter[finish_i]["idx1"] <= s_idx:
-            finish_i += 1
-        k = finish_i
-        chosen = None
-        while k < len(finish_enter):
-            e_cross = finish_enter[k]
-            e0 = e_cross["idx0"]
-            if _count_true(pref_start, s_idx, e0 + 1) > 0:
-                # Re-entered the start circle before reaching finish; invalidate this start event.
-                break
-            if _count_true(pref_finish, s_idx, e0) > 0:
-                # Already entered finish earlier; keep the first valid entry only.
-                break
-            chosen = e_cross
-            break
-        if chosen is None:
-            continue
-        end_idx = min(n, chosen["idx1"] + 1)
-        if end_idx <= s_idx:
-            continue
-        s_boundary = abs(haversine_distance((s_cross["lat"], s_cross["lon"]), start_center) - start_radius_m)
-        e_boundary = abs(haversine_distance((chosen["lat"], chosen["lon"]), finish_center) - finish_radius_m)
-        matches.append((s_idx, end_idx, s_cross, chosen, s_boundary, e_boundary))
-        next_allowed_start = end_idx
+    start_visits = _circle_visits(recorded_points, start_center, start_radius_m)
+    finish_visits = _circle_visits(recorded_points, finish_center, finish_radius_m)
+    # Fractional positions, rather than sample indices, order events even when
+    # both circles and a start re-entry occur between the same two samples.
+    events = []
+    for role, visits in (('start', start_visits), ('finish', finish_visits)):
+        for lo, hi in visits:
+            if lo > 1e-9:
+                events.append((lo, role, 'enter'))
+            if hi < n - 1 - 1e-9:
+                events.append((hi, role, 'exit'))
+    # A boundary can coincide with a recording endpoint, leaving no positive
+    # inside interval on that side. Recognize directed departures/arrivals,
+    # but not tangent contact, without extrapolating the recording.
+    scale = 6371000.0 * math.pi / 180.0
+    for role, center, radius in (('start', start_center, start_radius_m),
+                                 ('finish', finish_center, finish_radius_m)):
+        cos_lat = math.cos(math.radians(center[0]))
+        for idx, other, action in ((0, 1, 'exit'), (n - 1, n - 2, 'enter')):
+            point, neighbor = recorded_points[idx], recorded_points[other]
+            x = (point['lon'] - center[1]) * scale * cos_lat
+            y = (point['lat'] - center[0]) * scale
+            dx = (neighbor['lon'] - point['lon']) * scale * cos_lat
+            dy = (neighbor['lat'] - point['lat']) * scale
+            if abs(math.hypot(x, y) - radius) <= 1e-7 and x * dx + y * dy > 1e-9:
+                events.append((float(idx), role, action))
+    events.sort()
+    finish_inside = bool(finish_visits and finish_visits[0][0] <= 1e-9)
+    pending = None
+    matches = []
+    for position, role, action in events:
+        if role == 'start':
+            if action == 'enter':
+                pending = None
+            elif not finish_inside:
+                pending = position
+        elif action == 'exit':
+            finish_inside = False
+        else:
+            finish_inside = True
+            if pending is not None and position > pending + 1e-9:
+                sc = _circle_event(recorded_points, pending)
+                ec = _circle_event(recorded_points, position)
+                end_idx = ec['idx1'] + 1
+                # Include both brackets when the entire passage fits in one edge.
+                start_idx = sc['idx0']
+                s_error = abs(haversine_distance((sc['lat'], sc['lon']), start_center) - start_radius_m)
+                e_error = abs(haversine_distance((ec['lat'], ec['lon']), finish_center) - finish_radius_m)
+                matches.append((start_idx, end_idx, sc, ec, s_error, e_error))
+            pending = None
     return matches
 
 
@@ -983,6 +1322,8 @@ def _build_point_mode_variants(seg_filename: str,
                 "finish_center": (right_point["lat"], right_point["lon"]),
                 "start_radius_m": left_radius,
                 "finish_radius_m": right_radius,
+                "start_trap": idx > 0,
+                "finish_trap": idx < len(chain)-2,
                 "is_full": False,
             })
     return variants
@@ -1008,6 +1349,12 @@ def find_marker_mode_matches(recorded_points: List[Dict[str, Any]],
     finish_point = ref_def.get("finish_point")
     trap_points = ref_def.get("trap_points", [])
     if mode in ("point", "hybrid") and start_point and finish_point:
+        circle_cache: Dict[Any, Any] = {}
+        marker_cumulative = [0.]
+        if trap_points:
+            for a,b in zip(recorded_points,recorded_points[1:]):
+                marker_cumulative.append(marker_cumulative[-1]+haversine_distance(
+                    (a['lat'],a['lon']),(b['lat'],b['lon'])))
         for variant in _build_point_mode_variants(
             seg_filename,
             start_point,
@@ -1017,14 +1364,22 @@ def find_marker_mode_matches(recorded_points: List[Dict[str, Any]],
             finish_radius,
             trap_radius,
         ):
-            raw_matches = _find_point_pair_matches(
-                recorded_points,
-                variant["start_center"],
-                variant["finish_center"],
-                variant["start_radius_m"],
-                variant["finish_radius_m"],
-            )
+            if variant.get('start_trap') or variant.get('finish_trap'):
+                raw_matches = _find_trap_pair_matches(
+                    recorded_points,variant['start_center'],variant['finish_center'],
+                    variant['start_radius_m'],variant['finish_radius_m'],
+                    variant.get('start_trap',False),variant.get('finish_trap',False),
+                    circle_cache,marker_cumulative)
+            else:
+                raw_matches = _find_point_pair_matches(
+                    recorded_points, variant['start_center'], variant['finish_center'],
+                    variant['start_radius_m'], variant['finish_radius_m'])
             for (s_idx, e_idx, s_cross, e_cross, s_err, e_err) in raw_matches:
+                for role, event in (('start',s_cross),('finish',e_cross)):
+                    if event.get('trap_midpoint'):
+                        logging.info("Trap midpoint for '%s' (%s): entry=%s exit=%s midpoint=%s time_brackets=[%d,%d]",
+                                     variant['segment_name'],role,event['entry'].get('time'),
+                                     event['exit'].get('time'),event.get('time'),event['idx0'],event['idx1'])
                 point_candidates.append({
                     "segment_name": variant["segment_name"],
                     "pair_label": variant["pair_label"],
@@ -1041,6 +1396,7 @@ def find_marker_mode_matches(recorded_points: List[Dict[str, Any]],
                     ),
                     "dtw_avg": 0.0,
                     "mode_kind": "point",
+                    "length_boundary_allowance_m": variant["start_radius_m"] + variant["finish_radius_m"],
                     "start_line": None,
                     "finish_line": None,
                 })
@@ -1249,37 +1605,48 @@ def refine_endpoint_boundary(recorded_points: List[Dict[str, Any]],
                              candidate_index: int,
                              ref_sub: List[Tuple[float, float]],
                              L: int,
-                             window: int,
+                             window: float,
                              is_start: bool,
                              shape_mode: str,
                              lat_scale_ref: float,
                              ref_coord: Tuple[float, float],
-                             spatial_weight: float) -> int:
+                             spatial_weight: float,
+                             rec_cum_dists: Optional[List[float]] = None,
+                             distance_sampler: Any = None,
+                             context_length_m: Optional[float] = None) -> int:
     """
     Refine a single endpoint (start if is_start True, else end) via a local sliding window.
-    For the start, candidate subsegments of length L starting at each candidate index (within ±window)
-    are compared with ref_sub (the first L reference points). For the end, candidate subsegments ending at each
-    candidate index are compared with the last L reference points.
-    Returns the candidate index that minimizes the sum of pointwise haversine distances.
+    Candidate contexts cover context_length_m and use L comparison samples.
+    Pass the original physical extent explicitly when ref_sub was resampled:
+    its chords can shorten or collapse across curves/repetitions. Legacy callers
+    without an extent use the measured ref_sub polyline length. Boundaries remain original indices inside ±window meters.
+    An optional per-reference distance sampler reuses comparison copies/mappings.
+    Shape scoring and spatial penalty are unchanged.
     """
     best_idx = candidate_index
     best_cost = float('inf')
     ref_shape = build_shape_sequence(ref_sub, shape_mode, lat_scale_ref)
-    candidate_range = range(max(0, candidate_index - window), min(len(recorded_points), candidate_index + window + 1))
+    if rec_cum_dists is None:
+        rec_cum_dists = [0.0]
+        for previous, point in zip(recorded_points, recorded_points[1:]):
+            rec_cum_dists.append(rec_cum_dists[-1] + haversine_distance(
+                (previous['lat'], previous['lon']), (point['lat'], point['lon'])))
+    left, right = distance_window_bounds(rec_cum_dists, candidate_index, window)
+    if distance_sampler is None:
+        distance_sampler = make_distance_sampler(recorded_points, rec_cum_dists)
+    context_m = (context_length_m if context_length_m is not None else
+                 sum(haversine_distance(a, b) for a, b in zip(ref_sub, ref_sub[1:])))
+    candidate_range = range(left, min(len(recorded_points), right))
     for i in candidate_range:
         if is_start:
-            candidate_sub = recorded_points[i:i+L]
-            if len(candidate_sub) < L:
+            lo, hi = rec_cum_dists[i], rec_cum_dists[i] + context_m
+            if hi > rec_cum_dists[len(recorded_points) - 1] + 1e-6:
                 continue
-            candidate_resampled = resample_points(candidate_sub, L)
         else:
-            start_i = i - L + 1
-            if start_i < 0:
+            lo, hi = rec_cum_dists[i] - context_m, rec_cum_dists[i]
+            if lo < -1e-6:
                 continue
-            candidate_sub = recorded_points[start_i:i+1]
-            if len(candidate_sub) < L:
-                continue
-            candidate_resampled = resample_points(candidate_sub, L)
+        candidate_resampled, _source_positions = distance_sampler(max(0.,lo),hi,L)
         cand_shape = build_shape_sequence(candidate_resampled, shape_mode, lat_scale_ref)
         min_len = min(len(cand_shape), len(ref_shape))
         if min_len == 0:
@@ -1301,17 +1668,6 @@ def refine_endpoint_boundary(recorded_points: List[Dict[str, Any]],
             best_idx = i
     return best_idx
 
-def _endpoint_window_pts_from_m(rec_cum_dists: List[float], idx: int, window_m: float) -> int:
-    if window_m <= 0:
-        return 1
-    n = len(rec_cum_dists)
-    idx = max(0, min(idx, n - 1))
-    lower = rec_cum_dists[idx] - window_m
-    upper = rec_cum_dists[idx] + window_m
-    left = bisect.bisect_left(rec_cum_dists, lower, 0, idx + 1)
-    right = bisect.bisect_right(rec_cum_dists, upper, idx, n)
-    return max(1, idx - left, right - idx)
-
 def refine_boundaries_iteratively(recorded_points: List[Dict[str, Any]],
                                   initial_start: int,
                                   initial_end: int,
@@ -1319,14 +1675,14 @@ def refine_boundaries_iteratively(recorded_points: List[Dict[str, Any]],
                                   ref_end_coord: Tuple[float, float],
                                   ref_total_distance: float,
                                   rec_cum_dists: List[float],
-                                  iterative_window_start: int,
-                                  iterative_window_end: int,
+                                  iterative_window_start: float,
+                                  iterative_window_end: float,
                                   penalty_weight: float = 1.0) -> Tuple[int, int]:
     """
-    Iteratively refine candidate boundaries by grid search over start and end indices independently.
+    Refine boundaries within independent meter windows on original samples.
     
     The cost is:
-      cost(i, j) = |(rec_cum_dists[j] - rec_cum_dists[i]) - ref_total_distance| +
+      cost(i, j) = |(rec_cum_dists[min(j, len(rec_cum_dists) - 1)] - rec_cum_dists[i]) - ref_total_distance| +
                    penalty_weight * (
                        haversine_distance((recorded_points[i]['lat'], recorded_points[i]['lon']), ref_start_coord) +
                        haversine_distance((recorded_points[j-1]['lat'], recorded_points[j-1]['lon']), ref_end_coord)
@@ -1335,25 +1691,29 @@ def refine_boundaries_iteratively(recorded_points: List[Dict[str, Any]],
     """
     best_i = initial_start
     best_j = initial_end
-    candidate_distance = rec_cum_dists[initial_end] - rec_cum_dists[initial_start]
+    candidate_distance = rec_cum_dists[min(initial_end, len(rec_cum_dists) - 1)] - rec_cum_dists[initial_start]
     best_cost = abs(candidate_distance - ref_total_distance) + penalty_weight * (
         haversine_distance((recorded_points[initial_start]['lat'], recorded_points[initial_start]['lon']), ref_start_coord) +
         haversine_distance((recorded_points[initial_end-1]['lat'], recorded_points[initial_end-1]['lon']), ref_end_coord)
     )
-    i_min = max(0, initial_start - iterative_window_start)
-    i_max = min(len(recorded_points) - 2, initial_start + iterative_window_start)
-    j_min = max(initial_end - iterative_window_end, i_min + 2)
-    j_max = min(len(recorded_points), initial_end + iterative_window_end)
+    i_min, i_right = distance_window_bounds(rec_cum_dists, initial_start, iterative_window_start)
+    end_left, end_right = distance_window_bounds(rec_cum_dists, initial_end - 1, iterative_window_end)
+    i_max = min(len(recorded_points) - 2, i_right - 1)
+    j_min = max(end_left + 1, i_min + 2)
+    j_max = min(len(recorded_points), end_right)
     logging.debug("Iterative refinement: start in range [%d,%d], end in range [%d,%d].", i_min, i_max, j_min, j_max)
+    start_distances = {i: haversine_distance(
+        (recorded_points[i]['lat'], recorded_points[i]['lon']), ref_start_coord)
+        for i in range(i_min, i_max + 1)}
+    end_distances = {j: haversine_distance(
+        (recorded_points[j-1]['lat'], recorded_points[j-1]['lon']), ref_end_coord)
+        for j in range(j_min, j_max + 1)}
     for i in range(i_min, i_max + 1):
         for j in range(j_min, j_max + 1):
             if j <= i + 1:
                 continue
-            seg_distance = rec_cum_dists[j] - rec_cum_dists[i]
-            cost = abs(seg_distance - ref_total_distance) + penalty_weight * (
-                haversine_distance((recorded_points[i]['lat'], recorded_points[i]['lon']), ref_start_coord) +
-                haversine_distance((recorded_points[j-1]['lat'], recorded_points[j-1]['lon']), ref_end_coord)
-            )
+            seg_distance = rec_cum_dists[min(j, len(rec_cum_dists) - 1)] - rec_cum_dists[i]
+            cost = abs(seg_distance - ref_total_distance) + penalty_weight * (start_distances[i] + end_distances[j])
             if cost < best_cost:
                 best_cost = cost
                 best_i = i
@@ -1859,6 +2219,19 @@ def export_match_bundle(match: Dict[str, Any],
     def add_crossing_track(name: str, crossing: Optional[Dict[str, Any]]) -> None:
         if not crossing:
             return
+        if crossing.get('trap_midpoint'):
+            # The virtual coordinate is the entry/exit chord midpoint, not an
+            # interpolation between its original temporal bracketing samples.
+            points = []
+            for label, event in (('trap entry',crossing['entry']),
+                                 ('trap midpoint',crossing),('trap exit',crossing['exit'])):
+                point = gpxpy.gpx.GPXTrackPoint(event['lat'],event['lon'],time=event.get('time'))
+                point.description = f'{name} {label}'
+                points.append(point)
+            add_track(name,points)
+            add_crossing_track(name+' trap entry',crossing['entry'])
+            add_crossing_track(name+' trap exit',crossing['exit'])
+            return
         points: List[gpxpy.gpx.GPXTrackPoint] = []
         interp = crossing.get("interp", False)
         idx0 = crossing.get("idx0")
@@ -2140,10 +2513,10 @@ def main() -> None:
                         help="Radius in meters for start/end buffers used by --single-passage (defaults close to bbox-margin).")
     parser.add_argument("--passage-edge-frac", type=float, default=0.10,
                         help="How close to the segment edges the start/end buffer touches must occur (fraction of point count).")
-    parser.add_argument("--iterative-window-start", type=int, default=20,
-                        help="Search window (in points) for adjusting the start boundary independently.")
-    parser.add_argument("--iterative-window-end", type=int, default=20,
-                        help="Search window (in points) for adjusting the end boundary independently.")
+    parser.add_argument("--iterative-window-start", type=float, default=None,
+                        help="Start search radius in meters (preset default: loose/loosest 200; others 50).")
+    parser.add_argument("--iterative-window-end", type=float, default=None,
+                        help="Finish search radius in meters (preset default: loose/loosest 200; others 50).")
     parser.add_argument("--penalty-weight", type=float, default=2.0,
                         help="Weight for the Euclidean endpoint penalty in grid refinement (formerly lambda-weight).")
     parser.add_argument("--anchor-beta1", type=float, default=1.0,
@@ -2157,7 +2530,7 @@ def main() -> None:
     parser.add_argument("--crossing-shape-weight", type=float, default=1.0,
                         help="Weight for local shape matching when selecting crossings.")
     parser.add_argument("--crossing-shape-window-frac", type=float, default=0.2,
-                        help="Fraction of resample count to use for local crossing shape matching.")
+                        help="Fraction of reference distance for local crossing shape context and comparison sample budget.")
     parser.add_argument("--crossing-shape-window-min", type=int, default=3,
                         help="Minimum number of points for local crossing shape matching.")
     parser.add_argument("--line-length-m", type=float, default=8.0,
@@ -2215,6 +2588,15 @@ def main() -> None:
     if not math.isfinite(args.crossing_window_max) or args.crossing_window_max < 0:
         parser.error('--crossing-window-max must be finite and nonnegative (meters).')
     args.crossing_window_max_m = args.crossing_window_max
+    for window_key in ('endpoint_window_start', 'endpoint_window_end',
+                       'iterative_window_start', 'iterative_window_end'):
+        value = getattr(args, window_key)
+        if not math.isfinite(value) or value < 0:
+            parser.error('--' + window_key.replace('_', '-') + ' must be finite and nonnegative (meters).')
+    if not math.isfinite(args.crossing_edge_window_s):
+        parser.error('--crossing-edge-window-s must be finite (seconds).')
+    if not 0 < args.crossing_shape_window_frac <= 1:
+        parser.error('--crossing-shape-window-frac must be in (0, 1].')
     log_level = logging.WARNING
     if args.verbose:
         log_level = logging.INFO
@@ -2296,7 +2678,7 @@ def main() -> None:
             if not marker_matches:
                 logging.info("No matching segments found for reference '%s'.", seg_filename)
                 continue
-            accepted_windows: List[Tuple[int, int]] = []
+            accepted_marker_windows: Dict[str, List[Tuple[float, float]]] = {}
             if args.verbose:
                 marker_cfg = argparse.Namespace(
                     ref_segment=seg_filename,
@@ -2312,13 +2694,19 @@ def main() -> None:
                 final_end = candidate["end_index"]
                 if final_end <= final_start:
                     continue
-                detected_distance = rec_cum_dists[final_end] - rec_cum_dists[final_start]
+                start_crossing = candidate.get("start_crossing")
+                end_crossing = candidate.get("end_crossing")
+                detected_distance = (crossing_distance_along_track(recorded_points, rec_cum_dists, end_crossing)
+                                     - crossing_distance_along_track(recorded_points, rec_cum_dists, start_crossing))
                 if detected_distance <= 0:
                     continue
                 ref_distance = float(candidate.get("ref_distance", 0.0) or 0.0)
                 if args.min_length_ratio > 0 and ref_distance > 0:
-                    length_ratio = detected_distance / ref_distance
-                    if length_ratio < args.min_length_ratio:
+                    # Circle timing omits the start/finish radii. Account for
+                    # those geometric omissions without depending on which
+                    # recorded samples bracket the interpolated crossings.
+                    length_ratio = (detected_distance + candidate.get('length_boundary_allowance_m', 0.0)) / ref_distance
+                    if length_ratio + 1e-9 < args.min_length_ratio:
                         logging.warning(
                             "Rejected marker match for '%s': length ratio %.3f below min %.3f.",
                             candidate["segment_name"], length_ratio, args.min_length_ratio,
@@ -2349,20 +2737,26 @@ def main() -> None:
                 time_seconds = None
                 if start_crossing and end_crossing and start_crossing.get("time") and end_crossing.get("time"):
                     time_seconds = (end_crossing["time"] - start_crossing["time"]).total_seconds()
-                if time_seconds is None:
+                if time_seconds is None and not (start_crossing.get('trap_midpoint') or end_crossing.get('trap_midpoint')):
                     time_seconds = measure_segment_time(recorded_points, final_start, final_end)
                 time_str = str(datetime.timedelta(seconds=int(time_seconds))) if time_seconds is not None else "N/A"
+                accepted_windows = accepted_marker_windows.setdefault(candidate['segment_name'],[])
+                if start_crossing.get('trap_midpoint') or end_crossing.get('trap_midpoint'):
+                    dedupe_start = start_crossing.get('position',float(final_start))
+                    dedupe_end = end_crossing.get('position',float(final_end-1))
+                else:
+                    dedupe_start, dedupe_end = float(final_start),float(final_end)
                 for (prev_s, prev_e) in accepted_windows:
-                    overlap = max(0, min(final_end, prev_e) - max(final_start, prev_s))
+                    overlap = max(0, min(dedupe_end, prev_e) - max(dedupe_start, prev_s))
                     if overlap <= 0:
                         continue
-                    denom = min(prev_e - prev_s, final_end - final_start)
+                    denom = min(prev_e - prev_s, dedupe_end - dedupe_start)
                     if denom > 0 and overlap / denom > 0.9:
                         logging.info("Skipping near-duplicate marker match for '%s' at [%d,%d].",
                                      candidate["segment_name"], final_start, final_end)
                         break
                 else:
-                    accepted_windows.append((final_start, final_end))
+                    accepted_windows.append((dedupe_start, dedupe_end))
                     all_accepted_windows.append((final_start, final_end))
                     match_num = len(results) + 1
                     result = {
@@ -2455,30 +2849,30 @@ def main() -> None:
             logging.info("No matching segments found for reference '%s'.", seg_filename)
             continue
 
+        reference_cumulative = [0.0]
+        for previous, point in zip(ref_points, ref_points[1:]):
+            reference_cumulative.append(reference_cumulative[-1] + haversine_distance(
+                (previous['lat'], previous['lon']), (point['lat'], point['lon'])))
+        reference_sampler = make_distance_sampler(ref_points, reference_cumulative)
+        recorded_distance_sampler = make_distance_sampler(recorded_points, rec_cum_dists)
         L = max(3, int(0.1 * resample_count))
-        ref_start_sub = resample_points(ref_points[0:L], L)
-        ref_end_sub = resample_points(ref_points[-L:], L)
-        ref_start_shape = build_shape_sequence(ref_start_sub, shape_mode, lat_scale_ref)
-        ref_end_shape = build_shape_sequence(ref_end_sub, shape_mode, lat_scale_ref)
+        endpoint_context_m = 0.1 * ref_distance
+        ref_start_sub, _ = reference_sampler(0., endpoint_context_m, L)
+        ref_end_sub, _ = reference_sampler(ref_distance - endpoint_context_m, ref_distance, L)
         crossing_L = max(args.crossing_shape_window_min, int(args.crossing_shape_window_frac * resample_count))
-        ref_start_sub_cross = resample_points(ref_points[0:crossing_L], crossing_L)
-        ref_end_sub_cross = resample_points(ref_points[-crossing_L:], crossing_L)
+        crossing_context_m = min(ref_distance, args.crossing_shape_window_frac * ref_distance)
+        ref_start_sub_cross, _ = reference_sampler(0., crossing_context_m, crossing_L)
+        ref_end_sub_cross, _ = reference_sampler(ref_distance - crossing_context_m, ref_distance, crossing_L)
         ref_start_shape_cross = build_shape_sequence(ref_start_sub_cross, shape_mode, lat_scale_ref)
         ref_end_shape_cross = build_shape_sequence(ref_end_sub_cross, shape_mode, lat_scale_ref)
 
         accepted_windows: List[Tuple[int, int]] = []
-        crossing_edge_window_pts: Optional[int] = None
-        if median_dt is not None and args.crossing_edge_window_s > 0:
-            crossing_edge_window_pts = max(1, int(round(args.crossing_edge_window_s / median_dt)))
-        crossing_edge_window_pts: Optional[int] = None
-        if median_dt is not None and args.crossing_edge_window_s > 0:
-            crossing_edge_window_pts = max(1, int(round(args.crossing_edge_window_s / median_dt)))
         if args.verbose:
             seg_cfg = argparse.Namespace(
                 ref_segment=seg_filename,
                 resample_count=resample_count,
                 crossing_L=crossing_L,
-                crossing_edge_window_pts=crossing_edge_window_pts,
+                crossing_edge_window_s=args.crossing_edge_window_s,
                 line_length_m=args.line_length_m,
                 bbox_margin=args.bbox_margin,
                 candidate_margin=args.candidate_margin,
@@ -2500,14 +2894,12 @@ def main() -> None:
                         iterative_window_end=args.iterative_window_end,
                         penalty_weight=args.penalty_weight)
                 spatial_weight = args.endpoint_spatial_weight
-                start_window_pts = _endpoint_window_pts_from_m(rec_cum_dists, grid_start, args.endpoint_window_start)
-                end_window_pts = _endpoint_window_pts_from_m(rec_cum_dists, grid_end - 1, args.endpoint_window_end)
                 final_start = refine_endpoint_boundary(
-                    recorded_points, grid_start, ref_start_sub, L, start_window_pts, True,
-                    shape_mode, lat_scale_ref, ref_start_coords, spatial_weight)
+                    recorded_points, grid_start, ref_start_sub, L, args.endpoint_window_start, True,
+                    shape_mode, lat_scale_ref, ref_start_coords, spatial_weight, rec_cum_dists, recorded_distance_sampler, endpoint_context_m)
                 final_end = refine_endpoint_boundary(
-                    recorded_points, grid_end - 1, ref_end_sub, L, end_window_pts, False,
-                    shape_mode, lat_scale_ref, ref_end_coords, spatial_weight) + 1
+                    recorded_points, grid_end - 1, ref_end_sub, L, args.endpoint_window_end, False,
+                    shape_mode, lat_scale_ref, ref_end_coords, spatial_weight, rec_cum_dists, recorded_distance_sampler, endpoint_context_m) + 1
                 # Fallback if refinement breaks monotonicity/length
                 used_fallback = False
                 if final_end <= final_start:
@@ -2515,11 +2907,11 @@ def main() -> None:
                     final_start, final_end = orig_start, orig_end
                     used_fallback = True
 
-            detected_distance = rec_cum_dists[final_end] - rec_cum_dists[final_start]
+            detected_distance = rec_cum_dists[min(final_end, len(rec_cum_dists) - 1)] - rec_cum_dists[final_start]
             if detected_distance <= 0 and not used_fallback:
                 logging.warning("Refinement produced non-positive length for '%s'; falling back to original candidate [%d,%d).", seg_filename, orig_start, orig_end)
                 final_start, final_end = orig_start, orig_end
-                detected_distance = rec_cum_dists[final_end] - rec_cum_dists[final_start]
+                detected_distance = rec_cum_dists[min(final_end, len(rec_cum_dists) - 1)] - rec_cum_dists[final_start]
                 used_fallback = True
             if final_end <= final_start:
                 logging.warning("Rejected match for '%s': end index (%d) <= start index (%d).", seg_filename, final_end, final_start)
@@ -2555,17 +2947,18 @@ def main() -> None:
                     idx1 = crossing.get("idx1")
                     if idx0 is None or idx1 is None:
                         return float("inf")
+                    point = recorded_points[idx0]
+                    position_m = rec_cum_dists[idx0] + haversine_distance(
+                        (point['lat'], point['lon']), (crossing['lat'], crossing['lon']))
                     if is_start:
-                        window_start = max(0, idx1)
-                        window_end = min(len(recorded_points), window_start + crossing_L)
+                        lo, hi = position_m, position_m + crossing_context_m
                         ref_shape = ref_start_shape_cross
                     else:
-                        window_end = min(len(recorded_points), idx1 + 1)
-                        window_start = max(0, window_end - crossing_L)
+                        lo, hi = position_m - crossing_context_m, position_m
                         ref_shape = ref_end_shape_cross
-                    if window_end - window_start < 2:
-                        return float("inf")
-                    candidate = resample_points(recorded_points[window_start:window_end], crossing_L)
+                    if lo < -1e-6 or hi > rec_cum_dists[len(recorded_points)-1] + 1e-6:
+                        return float('inf')
+                    candidate, _source_positions = recorded_distance_sampler(max(0.,lo), hi, crossing_L)
                     cand_shape = build_shape_sequence(candidate, shape_mode, lat_scale_ref)
                     if not cand_shape or not ref_shape:
                         return float("inf")
@@ -2597,67 +2990,34 @@ def main() -> None:
                 if len(ref_points) >= 2:
                     start_normal, start_lat_scale = compute_line_normal(ref_start_coords, (ref_points[1]['lat'], ref_points[1]['lon']))
                     end_normal, end_lat_scale = compute_line_normal(ref_end_coords, (ref_points[-2]['lat'], ref_points[-2]['lon']))
-                    if crossing_edge_window_pts is not None:
-                        edge_window = crossing_edge_window_pts
-                    else:
-                        edge_window = max(30, int(0.1 * resample_count))
-                    endpoint_start_pts = _endpoint_window_pts_from_m(rec_cum_dists, start_idx, args.endpoint_window_start)
-                    endpoint_end_pts = _endpoint_window_pts_from_m(rec_cum_dists, end_idx - 1, args.endpoint_window_end)
-                    expanded_start_window = max(edge_window, endpoint_start_pts)
-                    expanded_end_window = max(edge_window, endpoint_end_pts)
-                    if args.crossing_expand_mode == "ratio" and ref_distance > 0:
-                        expected_end_idx = bisect.bisect_left(
-                            rec_cum_dists, rec_cum_dists[start_idx] + ref_distance,
-                            lo=start_idx + 1, hi=len(rec_cum_dists))
-                        expected_start_idx = bisect.bisect_right(
-                            rec_cum_dists, rec_cum_dists[end_idx] - ref_distance,
-                            lo=0, hi=end_idx)
-                        expected_pts_start = max(1, expected_end_idx - start_idx)
-                        expected_pts_end = max(1, end_idx - expected_start_idx)
-                        local_detected = rec_cum_dists[end_idx] - rec_cum_dists[start_idx]
-                        length_ratio = local_detected / ref_distance
-                        ratio_factor = max(1.0, length_ratio)
-                        dynamic_start = int(round(args.crossing_expand_k * expected_pts_start * ratio_factor))
-                        dynamic_end = int(round(args.crossing_expand_k * expected_pts_end * ratio_factor))
-                        expanded_start_window = max(expanded_start_window, dynamic_start)
-                        expanded_end_window = max(expanded_end_window, dynamic_end)
-
-                    s_lo = max(0, start_idx - edge_window)
-                    s_hi = min(len(recorded_points) - 1, start_idx + edge_window)
-                    e_lo = max(0, end_idx - edge_window)
-                    e_hi = min(len(recorded_points) - 1, end_idx + edge_window)
-                    start_cross = capped_crossing(
-                        recorded_points, ref_start_coords, start_normal, s_lo, s_hi, start_lat_scale, False, line_half_len, start_idx)
-                    end_cross = capped_crossing(
-                        recorded_points, ref_end_coords, end_normal, e_lo, e_hi, end_lat_scale, True, line_half_len, end_idx - 1)
-                    start_crossings = capped_crossings(
-                        recorded_points, ref_start_coords, start_normal, s_lo, s_hi, start_lat_scale, line_half_len, start_idx)
-                    end_crossings = capped_crossings(
-                        recorded_points, ref_end_coords, end_normal, e_lo, e_hi, end_lat_scale, line_half_len, end_idx - 1)
-
-                    if not start_crossings and expanded_start_window > edge_window:
-                        s_lo2 = max(0, start_idx - expanded_start_window)
-                        s_hi2 = min(len(recorded_points) - 1, start_idx + expanded_start_window)
-                        start_cross = capped_crossing(
-                            recorded_points, ref_start_coords, start_normal, s_lo2, s_hi2, start_lat_scale, False, line_half_len, start_idx)
-                        start_crossings = capped_crossings(
-                            recorded_points, ref_start_coords, start_normal, s_lo2, s_hi2, start_lat_scale, line_half_len, start_idx)
-                        if args.verbose:
-                            logging.info(
-                                "Requested expanded start crossing window for '%s' from %d to %d points (mode=%s, hard cap=%.1f m).",
-                                seg_filename, edge_window, expanded_start_window, args.crossing_expand_mode, args.crossing_window_max)
-
-                    if not end_crossings and expanded_end_window > edge_window:
-                        e_lo2 = max(0, end_idx - expanded_end_window)
-                        e_hi2 = min(len(recorded_points) - 1, end_idx + expanded_end_window)
-                        end_cross = capped_crossing(
-                            recorded_points, ref_end_coords, end_normal, e_lo2, e_hi2, end_lat_scale, True, line_half_len, end_idx - 1)
-                        end_crossings = capped_crossings(
-                            recorded_points, ref_end_coords, end_normal, e_lo2, e_hi2, end_lat_scale, line_half_len, end_idx - 1)
-                        if args.verbose:
-                            logging.info(
-                                "Requested expanded end crossing window for '%s' from %d to %d points (mode=%s, hard cap=%.1f m).",
-                                seg_filename, edge_window, expanded_end_window, args.crossing_expand_mode, args.crossing_window_max)
+                    ratio_factor = max(1.0, (rec_cum_dists[min(end_idx, len(rec_cum_dists) - 1)] - rec_cum_dists[start_idx]) / max(ref_distance, 1e-9))
+                    ratio_radius_m = args.crossing_expand_k * ref_distance * ratio_factor if args.crossing_expand_mode == 'ratio' else 0.0
+                    expanded_start_m = min(args.crossing_window_max, max(args.endpoint_window_start, ratio_radius_m))
+                    expanded_end_m = min(args.crossing_window_max, max(args.endpoint_window_end, ratio_radius_m))
+                    s_lo, e_lo = 0, 0
+                    s_hi = e_hi = len(recorded_points) - 1
+                    start_crossings = find_line_crossings_in_time_window(
+                        recorded_points, rec_cum_dists, ref_start_coords, start_normal,
+                        start_idx, args.crossing_window_max, start_lat_scale,
+                        args.crossing_edge_window_s, line_half_len)
+                    end_crossings = find_line_crossings_in_time_window(
+                        recorded_points, rec_cum_dists, ref_end_coords, end_normal,
+                        end_idx - 1, args.crossing_window_max, end_lat_scale,
+                        args.crossing_edge_window_s, line_half_len)
+                    if not start_crossings:
+                        start_crossings = find_line_crossings_in_distance_window(
+                            recorded_points, rec_cum_dists, ref_start_coords, start_normal,
+                            start_idx, expanded_start_m, start_lat_scale, line_half_len)
+                        logging.info("Expanded start crossing search for '%s': radius_m=%.1f mode=%s hard_cap_m=%.1f",
+                                     seg_filename, expanded_start_m, args.crossing_expand_mode, args.crossing_window_max)
+                    if not end_crossings:
+                        end_crossings = find_line_crossings_in_distance_window(
+                            recorded_points, rec_cum_dists, ref_end_coords, end_normal,
+                            end_idx - 1, expanded_end_m, end_lat_scale, line_half_len)
+                        logging.info("Expanded end crossing search for '%s': radius_m=%.1f mode=%s hard_cap_m=%.1f",
+                                     seg_filename, expanded_end_m, args.crossing_expand_mode, args.crossing_window_max)
+                    start_cross = start_crossings[0] if start_crossings else None
+                    end_cross = end_crossings[-1] if end_crossings else None
 
                     def end_crossings_for_start(s_idx: int) -> List[Dict[str, Any]]:
                         extra = max(args.gps_error_m * 4.0, ref_distance * 0.02)
@@ -2828,7 +3188,15 @@ def main() -> None:
                 end_d = haversine_distance(end_coords, ref_end_coords)
                 return start_coords, end_coords, start_d, end_d, start_cross, end_cross
 
-            detected_start_coords, detected_end_coords, start_diff, end_diff, start_crossing, end_crossing = compute_crossings_and_diffs(final_start, final_end)
+            selected_window, crossing_metrics, restored_crossings = select_crossing_window(
+                (final_start, final_end), (orig_start, orig_end),
+                compute_crossings_and_diffs, args.bbox_margin)
+            if restored_crossings:
+                final_start, final_end = selected_window
+                used_fallback = True
+                logging.info("Restored original DTW candidate for '%s' at [%d,%d): additional crossing retained within configured caps.",
+                             seg_filename, final_start, final_end)
+            detected_start_coords, detected_end_coords, start_diff, end_diff, start_crossing, end_crossing = crossing_metrics
             if start_crossing and start_crossing["idx0"] is not None:
                 adj_start = max(0, start_crossing["idx0"])
             else:
@@ -2840,7 +3208,7 @@ def main() -> None:
             if adj_end > adj_start:
                 final_start = adj_start
                 final_end = adj_end
-                detected_distance = rec_cum_dists[final_end] - rec_cum_dists[final_start]
+                detected_distance = rec_cum_dists[min(final_end, len(rec_cum_dists) - 1)] - rec_cum_dists[final_start]
 
             length_ratio = detected_distance / ref_distance if ref_distance > 0 else float('inf')
             min_ratio = 1.0 - args.candidate_margin
@@ -2859,7 +3227,7 @@ def main() -> None:
                     if not used_fallback:
                         logging.warning("Refined match violates length window; falling back to original candidate [%d,%d).", orig_start, orig_end)
                         final_start, final_end = orig_start, orig_end
-                        detected_distance = rec_cum_dists[final_end] - rec_cum_dists[final_start]
+                        detected_distance = rec_cum_dists[min(final_end, len(rec_cum_dists) - 1)] - rec_cum_dists[final_start]
                         detected_start_coords, detected_end_coords, start_diff, end_diff, start_crossing, end_crossing = compute_crossings_and_diffs(final_start, final_end)
                         length_ratio = detected_distance / ref_distance if ref_distance > 0 else float('inf')
                         used_fallback = True

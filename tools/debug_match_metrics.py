@@ -76,7 +76,10 @@ def _compute_crossings(mod: Any,
                        ref_points: List[Dict[str, Any]],
                        edge_window_pts: int,
                        line_length_m: float,
-                       crossing_window_max_m: float = 20.0) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+                       crossing_window_max_m: float = 20.0,
+                       edge_window_s: Optional[float] = None,
+                       expanded_start_m: Optional[float] = None,
+                       expanded_end_m: Optional[float] = None) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
     if len(ref_points) < 2 or len(points) < 2:
         return None, None, [], []
     ref_start = (ref_points[0]["lat"], ref_points[0]["lon"])
@@ -93,16 +96,23 @@ def _compute_crossings(mod: Any,
     for previous, point in zip(points, points[1:]):
         cumulative.append(cumulative[-1] + mod.haversine_distance(
             (previous['lat'], previous['lon']), (point['lat'], point['lon'])))
-    def crossings(anchor, normal, center, left, right, scale):
+    def crossings(anchor, normal, center, left, right, scale, initial=True):
+        if initial and edge_window_s is not None:
+            return mod.find_line_crossings_in_time_window(
+                points, cumulative, anchor, normal, center, crossing_window_max_m,
+                scale, edge_window_s, line_half_len)
         return mod.find_line_crossings_in_distance_window(
-            points, cumulative, anchor, normal, center, crossing_window_max_m,
+            points, cumulative, anchor, normal, center,
+            (crossing_window_max_m if edge_window_s is None else
+             min(crossing_window_max_m, (expanded_start_m if center == 0 else expanded_end_m)
+                 if (expanded_start_m if center == 0 else expanded_end_m) is not None else crossing_window_max_m)),
             scale, line_half_len, left, right)
     start_crossings = crossings(ref_start, start_normal, 0, s_lo, s_hi + 1, start_lat_scale)
     end_crossings = crossings(ref_end, end_normal, len(points) - 1, e_lo, e_hi + 1, end_lat_scale)
     if not start_crossings:
-        start_crossings = crossings(ref_start, start_normal, 0, 0, len(points), start_lat_scale)
+        start_crossings = crossings(ref_start, start_normal, 0, 0, len(points), start_lat_scale, False)
     if not end_crossings:
-        end_crossings = crossings(ref_end, end_normal, len(points) - 1, 0, len(points), end_lat_scale)
+        end_crossings = crossings(ref_end, end_normal, len(points) - 1, 0, len(points), end_lat_scale, False)
     start_cross = start_crossings[0] if start_crossings else None
     end_cross = end_crossings[-1] if end_crossings else None
     return start_cross, end_cross, start_crossings, end_crossings
@@ -188,16 +198,6 @@ def _compute_metrics(mod: Any,
             ))
         return cum
 
-    def endpoint_window_pts_from_m(cum: List[float], idx: int, window_m: float) -> int:
-        if window_m <= 0 or not cum:
-            return 1
-        idx = max(0, min(idx, len(cum) - 1))
-        lower = cum[idx] - window_m
-        upper = cum[idx] + window_m
-        left = bisect.bisect_left(cum, lower, 0, idx + 1)
-        right = bisect.bisect_right(cum, upper, idx, len(cum))
-        return max(1, idx - left, right - idx)
-
     ref_distance = mod.compute_total_distance(ref_points)
     match_distance = mod.compute_total_distance(match_points)
     match_cum = build_cum(match_points)
@@ -229,49 +229,16 @@ def _compute_metrics(mod: Any,
             else:
                 dtw_window_max_avg = sum(costs) / max(1, len(costs))
 
-    median_dt = mod.compute_median_time_step(match_points)
     if crossing_edge_window_pts_override is not None:
-        edge_window_pts = crossing_edge_window_pts_override
-    elif median_dt and args.crossing_edge_window_s > 0:
-        edge_window_pts = max(1, int(round(args.crossing_edge_window_s / median_dt)))
-    else:
-        edge_window_pts = max(1, int(round(0.1 * resample_count)))
-
-    endpoint_start_pts = endpoint_window_pts_from_m(match_cum, 0, args.endpoint_window_start)
-    endpoint_end_pts = endpoint_window_pts_from_m(match_cum, len(match_points) - 1, args.endpoint_window_end)
-    expanded_start_window = max(edge_window_pts, endpoint_start_pts)
-    expanded_end_window = max(edge_window_pts, endpoint_end_pts)
-    if args.crossing_expand_mode == "ratio" and ref_distance > 0 and match_cum:
-        expected_end_idx = bisect.bisect_left(
-            match_cum, match_cum[0] + ref_distance, lo=1, hi=len(match_cum))
-        expected_start_idx = bisect.bisect_right(
-            match_cum, match_cum[-1] - ref_distance, lo=0, hi=len(match_cum) - 1)
-        expected_pts_start = max(1, expected_end_idx)
-        expected_pts_end = max(1, len(match_cum) - 1 - expected_start_idx)
-        length_ratio = match_distance / ref_distance
-        ratio_factor = max(1.0, length_ratio)
-        dynamic_start = int(round(args.crossing_expand_k * expected_pts_start * ratio_factor))
-        dynamic_end = int(round(args.crossing_expand_k * expected_pts_end * ratio_factor))
-        expanded_start_window = max(expanded_start_window, dynamic_start)
-        expanded_end_window = max(expanded_end_window, dynamic_end)
-
+        print('Ignoring legacy crossing_edge_window_pts: using actual timestamp windows.', file=sys.stderr)
+    ratio_factor = max(1., match_distance / max(ref_distance, 1e-9))
+    ratio_m = args.crossing_expand_k * ref_distance * ratio_factor if args.crossing_expand_mode == 'ratio' else 0.
+    expanded_start_m = min(args.crossing_window_max, max(args.endpoint_window_start, ratio_m))
+    expanded_end_m = min(args.crossing_window_max, max(args.endpoint_window_end, ratio_m))
     start_cross, end_cross, start_crossings, end_crossings = _compute_crossings(
-        mod, match_points, ref_points, edge_window_pts, args.line_length_m, args.crossing_window_max
-    )
-    if not start_crossings and expanded_start_window > edge_window_pts:
-        start_cross2, _end_cross2, start_crossings2, _end_crossings2 = _compute_crossings(
-            mod, match_points, ref_points, expanded_start_window, args.line_length_m, args.crossing_window_max
-        )
-        if start_crossings2:
-            start_cross = start_cross2
-            start_crossings = start_crossings2
-    if not end_crossings and expanded_end_window > edge_window_pts:
-        _start_cross2, end_cross2, _start_crossings2, end_crossings2 = _compute_crossings(
-            mod, match_points, ref_points, expanded_end_window, args.line_length_m, args.crossing_window_max
-        )
-        if end_crossings2:
-            end_cross = end_cross2
-            end_crossings = end_crossings2
+        mod, match_points, ref_points, len(match_points), args.line_length_m, args.crossing_window_max,
+        edge_window_s=args.crossing_edge_window_s,
+        expanded_start_m=expanded_start_m, expanded_end_m=expanded_end_m)
 
     ref_start = (ref_points[0]["lat"], ref_points[0]["lon"]) if ref_points else (0.0, 0.0)
     ref_end = (ref_points[-1]["lat"], ref_points[-1]["lon"]) if ref_points else (0.0, 0.0)
@@ -282,18 +249,31 @@ def _compute_metrics(mod: Any,
         crossing_L = crossing_L_override
     else:
         crossing_L = max(args.crossing_shape_window_min, int(args.crossing_shape_window_frac * resample_count))
-    ref_start_shape = mod.build_shape_sequence(mod.resample_points(ref_points[0:crossing_L], crossing_L), args.shape_mode, lat_scale_ref)
-    ref_end_shape = mod.build_shape_sequence(mod.resample_points(ref_points[-crossing_L:], crossing_L), args.shape_mode, lat_scale_ref)
+    ref_sampler = mod.make_distance_sampler(ref_points, build_cum(ref_points))
+    match_sampler = mod.make_distance_sampler(match_points, match_cum)
+    context_m = min(ref_distance, args.crossing_shape_window_frac * ref_distance)
+    start_reference, _ = ref_sampler(0., context_m, crossing_L)
+    end_reference, _ = ref_sampler(ref_distance-context_m, ref_distance, crossing_L)
+    ref_start_shape = mod.build_shape_sequence(start_reference, args.shape_mode, lat_scale_ref)
+    ref_end_shape = mod.build_shape_sequence(end_reference, args.shape_mode, lat_scale_ref)
 
-    start_shape_cost = None
-    end_shape_cost = None
+    def local_cost(crossing, is_start):
+        if crossing is None:
+            return None
+        idx = crossing['idx0']
+        position = match_cum[idx] + mod.haversine_distance(
+            (match_points[idx]['lat'], match_points[idx]['lon']), (crossing['lat'],crossing['lon']))
+        lo, hi = (position,position+context_m) if is_start else (position-context_m,position)
+        if lo < -1e-6 or hi > match_cum[-1]+1e-6:
+            return None
+        samples, _ = match_sampler(max(0.,lo),hi,crossing_L)
+        shape = mod.build_shape_sequence(samples,args.shape_mode,lat_scale_ref)
+        reference = ref_start_shape if is_start else ref_end_shape
+        return mod.fastdtw(shape,reference,dist=mod._DTW_DISTANCE_FN)[0] / max(1,len(reference))
+
+    start_shape_cost = local_cost(start_cross, True)
+    end_shape_cost = local_cost(end_cross, False)
     pair_shape_cost = None
-    if start_cross:
-        s_idx = max(0, start_cross["idx1"])
-        start_shape_cost = _shape_cost(mod, match_points, ref_start_shape, s_idx, min(len(match_points), s_idx + crossing_L), args.shape_mode, lat_scale_ref, crossing_L)
-    if end_cross:
-        e_idx = min(len(match_points), end_cross["idx0"] + 1)
-        end_shape_cost = _shape_cost(mod, match_points, ref_end_shape, max(0, e_idx - crossing_L), e_idx, args.shape_mode, lat_scale_ref, crossing_L)
     if start_cross and end_cross:
         s_idx = start_cross["idx1"]
         e_idx = end_cross["idx0"]
@@ -322,9 +302,9 @@ def _compute_metrics(mod: Any,
         "dtw_window_max_avg": dtw_window_max_avg,
         "resample_count": resample_count,
         "crossing_window_max_m": args.crossing_window_max,
-        "edge_window_pts": edge_window_pts,
-        "expanded_start_window_pts": expanded_start_window,
-        "expanded_end_window_pts": expanded_end_window,
+        "edge_window_s": args.crossing_edge_window_s,
+        "expanded_start_window_m": expanded_start_m,
+        "expanded_end_window_m": expanded_end_m,
         "start_cross": start_cross,
         "end_cross": end_cross,
         "start_crossings": start_crossings,
@@ -358,9 +338,9 @@ def _print_metrics(label: str, metrics: Dict[str, Any]) -> None:
     if metrics.get("dtw_window_max_avg") is not None:
         print(f"  dtw_window_max_avg={metrics['dtw_window_max_avg']:.3f}")
     print(f"  resample_count={metrics['resample_count']}")
-    print(f"  crossing_edge_window_pts={metrics['edge_window_pts']}")
-    print(f"  crossing_expanded_start_window_pts={metrics['expanded_start_window_pts']}")
-    print(f"  crossing_expanded_end_window_pts={metrics['expanded_end_window_pts']}")
+    print(f"  crossing_edge_window_s={metrics['edge_window_s']}")
+    print(f"  crossing_expanded_start_window_m={metrics['expanded_start_window_m']}")
+    print(f"  crossing_expanded_end_window_m={metrics['expanded_end_window_m']}")
     print(f"  crossing_window_max_m={metrics['crossing_window_max_m']:.1f}")
     print(f"  start_cross={_format_cross(metrics['start_cross'])}")
     print(f"  end_cross={_format_cross(metrics['end_cross'])}")
@@ -572,13 +552,13 @@ def main() -> None:
                         help="Crossing edge window in seconds.")
     parser.add_argument("--crossing-window-max", type=float, default=20.0,
                         help="Maximum crossing search distance on either side of each boundary, in meters (default: 20).")
-    parser.add_argument("--crossing-expand-mode", default="fixed",
+    parser.add_argument("--crossing-expand-mode", default="ratio",
                         choices=["fixed", "ratio"],
                         help="How to expand crossing search windows when no crossings are found.")
     parser.add_argument("--crossing-expand-k", type=float, default=1.0,
                         help="Scale factor for ratio-based crossing window expansion.")
     parser.add_argument("--crossing-shape-window-frac", type=float, default=0.2,
-                        help="Shape window fraction for crossing context.")
+                        help="Fraction of reference distance for crossing context (default: 0.2).")
     parser.add_argument("--crossing-shape-window-min", type=int, default=3,
                         help="Minimum shape window for crossings.")
     parser.add_argument("--endpoint-window-start", type=float, default=10.0,
